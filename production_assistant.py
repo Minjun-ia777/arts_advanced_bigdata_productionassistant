@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import io
 from PIL import Image
+import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -13,29 +14,33 @@ st.set_page_config(
 
 # --- API FUNCTIONS ---
 
-# 1. Text Function (Updated URL)
 @st.cache_data(show_spinner=False)
 def query_text_api(payload, model_name):
-    # NEW URL HERE:
-    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+    # Standard HF Inference URL
+    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
     
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
-        return {"error": "⚠️ Token missing. Please check your Streamlit Secrets."}
+        return {"error": "⚠️ Token missing. Check .streamlit/secrets.toml"}
     
     headers = {"Authorization": f"Bearer {hf_token}"}
+    
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
-        return response.json()
+        
+        # DEBUG: Check if response is JSON
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            # If not JSON, return the raw text so we can see the error
+            return {"error": f"API Error: {response.text}"}
+            
     except Exception as e:
         return {"error": f"Connection error: {str(e)}"}
 
-# 2. Image Function (Updated URL)
 def query_image_api(payload, model_name):
-    # NEW URL HERE:
-    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
-    
+    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
@@ -48,34 +53,24 @@ def query_image_api(payload, model_name):
     except:
         return None
 
-# --- SIDEBAR INSTRUCTIONS ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2503/2503508.png", width=50)
     st.title("User Guide")
-    
     st.markdown("""
-    **Welcome to your AI Co-Producer.**
+    **Status:** 🟢 System Ready
     
-    **1. 🔑 Setup**
-    Ensure your Hugging Face Token is set in `.streamlit/secrets.toml` (local) or App Settings (Cloud).
-    
-    **2. 🛠 Select a Tool**
-    * **Script Doctor:** Fix and analyze existing text.
-    * **Storyboarder:** Create visuals.
-    * **Story Generator:** Write new ideas from scratch.
-    
-    **3. ⚠️ Troubleshooting**
-    If the app says "Model Loading," wait 30 seconds and try again.
+    **Troubleshooting:**
+    If you see "Model Loading", wait 30s and try again. 
+    Free models sometimes sleep!
     """)
-    
     st.divider()
-    st.caption("Built for Final Project 2025")
+    st.caption("Final Project 2025")
 
-# --- MAIN HEADER ---
+# --- HEADER ---
 st.title("🎬 AI Pre-Production Assistant")
-st.markdown("##### Transform your film ideas into scripts and storyboards instantly.")
 
-# --- INITIALIZE SESSION STATE ---
+# --- SESSION STATE ---
 if 'summary_result' not in st.session_state: st.session_state.summary_result = ""
 if 'logline_result' not in st.session_state: st.session_state.logline_result = ""
 if 'generated_script' not in st.session_state: st.session_state.generated_script = ""
@@ -87,154 +82,100 @@ tab1, tab2, tab3 = st.tabs(["📝 Script Doctor", "🎨 Storyboarder", "✨ Stor
 # TAB 1: SCRIPT DOCTOR
 # ==========================================
 with tab1:
-    st.markdown("### 🩺 Script Analysis & Repair")
-    
-    with st.expander("ℹ️ Instructions: How to use the Script Doctor"):
-        st.markdown("Paste a scene text below. The AI will summarize it and generate a professional logline.")
-
+    st.subheader("Script Analysis")
     col_input, col_output = st.columns([1, 1])
     
     with col_input:
-        script_input = st.text_area(
-            "Input Scene Text", 
-            height=300, 
-            placeholder="INT. SPACE STATION - NIGHT\n\nCOMMANDER ZARA (40s) looks at the red flashing light...",
-            help="Paste a scene here. Aim for 200-500 words."
-        )
+        script_input = st.text_area("Paste Scene:", height=300, placeholder="INT. ROOM - NIGHT...")
         
-        if st.button("🚀 Analyze Script", type="primary"):
-            if not script_input:
-                st.warning("⚠️ Please paste a script scene first.")
-            else:
-                with st.spinner("Reading your script..."):
-                    # Summary
-                    summ_payload = {"inputs": script_input, "parameters": {"max_new_tokens": 150}}
-                    summ_response = query_text_api(summ_payload, "facebook/bart-large-cnn")
-                    
-                    # Logline
-                    log_prompt = f"Read this script scene and write a professional 1-sentence logline/pitch for it:\n\n{script_input}"
-                    log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 50, "temperature": 0.6}}
-                    log_response = query_text_api(log_payload, "mistralai/Mistral-7B-Instruct-v0.2")
+        if st.button("Analyze Script", type="primary"):
+            with st.spinner("Analyzing..."):
+                # 1. Summary (BART is very stable)
+                summ_payload = {"inputs": script_input, "parameters": {"max_new_tokens": 100}}
+                summ_response = query_text_api(summ_payload, "facebook/bart-large-cnn")
+                
+                # 2. Logline (Using Zephyr instead of Mistral)
+                log_prompt = f"Summarize this movie scene into a one-sentence logline:\n{script_input}"
+                log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 50}}
+                log_response = query_text_api(log_payload, "HuggingFaceH4/zephyr-7b-beta")
 
-                    # Handle responses
-                    if isinstance(summ_response, list):
-                        st.session_state.summary_result = summ_response[0].get('summary_text', 'Error')
-                    elif isinstance(summ_response, dict) and "error" in summ_response:
-                        st.error(f"Summary Error: {summ_response['error']}")
+                if isinstance(summ_response, list):
+                    st.session_state.summary_result = summ_response[0].get('summary_text', 'Error')
+                elif "error" in summ_response:
+                    st.error(summ_response["error"])
 
-                    if isinstance(log_response, list):
-                        full_text = log_response[0].get('generated_text', '')
-                        st.session_state.logline_result = full_text.replace(log_prompt, "").strip()
+                if isinstance(log_response, list):
+                    st.session_state.logline_result = log_response[0].get('generated_text', '').replace(log_prompt, "").strip()
 
     with col_output:
-        st.markdown("#### Analysis Report")
         if st.session_state.summary_result:
-            st.success(f"**📝 Executive Summary:**\n\n{st.session_state.summary_result}")
-        else:
-            st.info("Waiting for input...")
-            
+            st.success(f"**Summary:** {st.session_state.summary_result}")
         if st.session_state.logline_result:
-            st.warning(f"**🎬 Logline / Pitch:**\n\n{st.session_state.logline_result}")
+            st.info(f"**Logline:** {st.session_state.logline_result}")
 
 # ==========================================
 # TAB 2: STORYBOARDER
 # ==========================================
 with tab2:
-    st.markdown("### 🖌️ Visual Development")
+    st.subheader("Visual Development")
+    sb_prompt = st.text_input("Shot Description:", value=st.session_state.logline_result)
+    sb_style = st.selectbox("Style:", ["Cinematic", "Anime", "Cyberpunk", "Oil Painting"])
     
-    with st.expander("ℹ️ Instructions: How to get the best images"):
-        st.markdown("Describe the shot using lighting (e.g., 'neon', 'sunset') and style keywords.")
-    
-    # Use logline from Tab 1 if available
-    default_val = st.session_state.logline_result if st.session_state.logline_result else ""
-    
-    sb_prompt = st.text_input(
-        "Describe the shot:", 
-        value=default_val, 
-        placeholder="A wide shot of a futuristic city at sunset...",
-        help="Type a visual description of the scene you want to see."
-    )
-    
-    sb_style = st.selectbox(
-        "Cinematography Style:", 
-        ["Cinematic Film", "Anime", "Cyberpunk", "Oil Painting", "Black & White Noir", "3D Render"]
-    )
-    
-    if st.button("🎨 Generate Storyboard", type="primary"):
-        if not sb_prompt:
-            st.warning("⚠️ Please describe the scene first.")
-        else:
-            with st.spinner("Rendering high-resolution frame..."):
-                full_prompt = f"{sb_style} style, {sb_prompt}, 8k, highly detailed, dramatic lighting, masterpiece"
-                image_bytes = query_image_api({"inputs": full_prompt}, "runwayml/stable-diffusion-v1-5")
-                
-                if image_bytes:
-                    try:
-                        image = Image.open(io.BytesIO(image_bytes))
-                        st.image(image, caption=f"Generated in {sb_style} style", use_container_width=True)
-                    except:
-                        st.error("Error: The model is loading or the image failed to decode. Try again in 30 seconds.")
-                else:
-                    st.error("Error generating image. Check your Token.")
+    if st.button("Generate Image", type="primary"):
+        with st.spinner("Generating..."):
+            full_prompt = f"{sb_style} style, {sb_prompt}, 8k masterpiece"
+            image_bytes = query_image_api({"inputs": full_prompt}, "runwayml/stable-diffusion-v1-5")
+            
+            if image_bytes:
+                try:
+                    image = Image.open(io.BytesIO(image_bytes))
+                    st.image(image, caption=sb_style, use_container_width=True)
+                except:
+                    st.error("Model is loading. Try again in 30 seconds.")
+            else:
+                st.error("Image generation failed.")
 
 # ==========================================
-# TAB 3: STORY GENERATOR
+# TAB 3: STORY GENERATOR (Fixed Model)
 # ==========================================
 with tab3:
-    st.markdown("### 🧬 AI Screenwriter")
-    
-    with st.expander("ℹ️ Instructions: Create a scene from scratch"):
-        st.markdown("Define the ingredients below. The AI will write a script format scene for you.")
-        
+    st.subheader("AI Screenwriter")
     c1, c2 = st.columns(2)
     with c1:
-        genre = st.selectbox("Genre", ["Sci-Fi", "Horror", "Romance", "Thriller", "Comedy", "Western"])
-        character = st.text_input("Protagonist", placeholder="e.g. A retired spy", help="Who is the main character?")
+        genre = st.selectbox("Genre", ["Sci-Fi", "Horror", "Comedy", "Western"])
+        character = st.text_input("Protagonist", placeholder="e.g. A robot")
     with c2:
-        setting = st.text_input("Setting", placeholder="e.g. An underground bunker", help="Where does this scene happen?")
-        conflict = st.text_input("The Conflict", placeholder="e.g. The door won't open", help="What is the problem to solve?")
+        setting = st.text_input("Setting", placeholder="e.g. Mars")
+        conflict = st.text_input("Conflict", placeholder="e.g. Out of oxygen")
 
-    if st.button("✨ Write Scene", type="primary"):
-        if not character or not setting:
-            st.warning("⚠️ Please provide at least a Character and a Setting.")
-        else:
-            with st.spinner("Writing screenplay... (This may take 30-60 seconds)"):
-                script_prompt = f"""
-                Act as a professional screenwriter. Write a scene in standard screenplay format using these details:
-                Genre: {genre}
-                Characters: {character}
-                Setting: {setting}
-                Plot Conflict: {conflict}
-                
-                Include Scene Heading, Action Lines, and Dialogue. Keep it engaging.
-                """
-                
-                payload = {
-                    "inputs": script_prompt,
-                    "parameters": {
-                        "max_new_tokens": 650,
-                        "temperature": 0.9,
-                        "return_full_text": False
-                    }
+    if st.button("Write Scene", type="primary"):
+        with st.spinner("Writing script..."):
+            # Prompt
+            script_prompt = f"""<|system|>
+            You are a screenwriter. Write a scene script.
+            <|user|>
+            Write a scene about a {character} in {setting}. 
+            Genre: {genre}. Conflict: {conflict}.
+            Format: Standard Screenplay.
+            <|assistant|>"""
+            
+            payload = {
+                "inputs": script_prompt,
+                "parameters": {
+                    "max_new_tokens": 500,
+                    "temperature": 0.8,
+                    "return_full_text": False
                 }
-                
-                # Request API
-                response = query_text_api(payload, "mistralai/Mistral-7B-Instruct-v0.2")
-                
-                # Error Handling Logic
-                if isinstance(response, list):
-                    generated_text = response[0].get('generated_text', '')
-                    st.session_state.generated_script = generated_text
-                    st.success("Script generated successfully!")
-                elif isinstance(response, dict) and "error" in response:
-                    st.error(f"AI Error: {response['error']}")
-                    if "loading" in response['error'].lower():
-                        st.warning("⏳ Model is loading. Please wait 60 seconds and click 'Write Scene' again.")
-                else:
-                    st.error("Unknown error occurred.")
-    
-    st.divider()
-    
+            }
+            
+            # SWITCHED MODEL: Zephyr-7b-beta (More reliable than Mistral v0.2 on free tier)
+            response = query_text_api(payload, "HuggingFaceH4/zephyr-7b-beta")
+            
+            if isinstance(response, list):
+                st.session_state.generated_script = response[0].get('generated_text', '')
+                st.success("Done!")
+            elif "error" in response:
+                st.error(response["error"])
+
     if st.session_state.generated_script:
-        st.markdown("#### 📜 Final Script")
-        st.text_area("Copy your script:", value=st.session_state.generated_script, height=500)
+        st.text_area("Script:", value=st.session_state.generated_script, height=400)
