@@ -18,21 +18,21 @@ except:
     st.error("⚠️ HF_TOKEN not found in Secrets. The app will not work.")
     st.stop()
 
-# --- API FUNCTIONS (Using Chat Completion) ---
+# --- API FUNCTIONS ---
 
 @st.cache_data(show_spinner=False)
 def get_llm_response(prompt, max_tokens=500):
     """
-    Uses the official Hugging Face Client with CHAT COMPLETION.
-    This fixes the "Task not supported" error.
-    Model: Zephyr-7b-beta (Reliable & Free)
+    Model: Qwen2.5-7B-Instruct
+    Why? It is free, requires no permissions, and is widely supported on the free tier.
     """
-    repo_id = "HuggingFaceH4/zephyr-7b-beta"
+    # SWITCHING TO QWEN 7B (The most reliable free model right now)
+    repo_id = "Qwen/Qwen2.5-7B-Instruct" 
     
     try:
         client = InferenceClient(token=hf_token)
         
-        # We format the prompt as a chat message
+        # Format prompt for Qwen
         messages = [{"role": "user", "content": prompt}]
         
         response = client.chat_completion(
@@ -42,7 +42,6 @@ def get_llm_response(prompt, max_tokens=500):
             temperature=0.7
         )
         
-        # Extract the actual text from the chat response
         return response.choices[0].message.content
         
     except Exception as e:
@@ -50,14 +49,12 @@ def get_llm_response(prompt, max_tokens=500):
 
 def get_image_response(prompt):
     """
-    Uses the official Hugging Face Client for Images.
     Model: Stable Diffusion v1.5
     """
     repo_id = "runwayml/stable-diffusion-v1-5"
     
     try:
         client = InferenceClient(token=hf_token)
-        # Direct text_to_image call
         image = client.text_to_image(prompt, model=repo_id)
         return image
     except Exception as e:
