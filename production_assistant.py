@@ -3,7 +3,6 @@ import requests
 import io
 from PIL import Image
 import json
-import time
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -13,17 +12,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- "SELF-HEALING" API FUNCTION ---
+# --- API FUNCTIONS ---
+
 @st.cache_data(show_spinner=False)
-def query_text_api_robust(payload, model_name):
+def query_text_api(payload):
     """
-    Tries multiple URLs automatically to find where the model is hiding.
+    Uses the Zephyr model for all text generation.
+    This is the most stable configuration for the Free Tier.
     """
-    # The list of possible addresses where the model might live
-    urls_to_try = [
-        f"https://router.huggingface.co/hf-inference/models/{model_name}", # New Router
-        f"https://api-inference.huggingface.co/models/{model_name}"       # Old Standard
-    ]
+    # URL: New Router (Required)
+    # MODEL: Zephyr-7b-beta (Reliable)
+    API_URL = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
     
     try:
         hf_token = st.secrets["HF_TOKEN"]
@@ -32,43 +31,34 @@ def query_text_api_robust(payload, model_name):
     
     headers = {"Authorization": f"Bearer {hf_token}"}
     
-    last_error = ""
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload)
+        
+        # If successful
+        if response.status_code == 200:
+            return response.json()
+        
+        # If loading
+        elif "loading" in response.text.lower():
+             return {"error": "⏳ Model is loading... (Wait 30s and try again)"}
+        
+        # Other errors
+        else:
+            return {"error": f"API Error {response.status_code}: {response.text}"}
+            
+    except Exception as e:
+        return {"error": f"Connection error: {str(e)}"}
+
+def query_image_api(payload):
+    # URL: New Router
+    # MODEL: Stable Diffusion v1.5
+    API_URL = "https://router.huggingface.co/hf-inference/models/runwayml/stable-diffusion-v1-5"
     
-    # Loop through URLs until one works
-    for url in urls_to_try:
-        try:
-            response = requests.post(url, headers=headers, json=payload)
-            
-            # If successful (200 OK)
-            if response.status_code == 200:
-                try:
-                    return response.json()
-                except json.JSONDecodeError:
-                    return {"error": f"API Error (Not JSON): {response.text}"}
-            
-            # If model is loading (503), wait and return error so user knows to wait
-            elif response.status_code == 503:
-                return {"error": f"⏳ Model is loading... Please wait 30s and try again."}
-            
-            # If "Not Found" or "Not Supported", just continue to the next URL
-            else:
-                last_error = f"Error {response.status_code}: {response.text}"
-                continue 
-                
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    # If we tried all URLs and none worked:
-    return {"error": f"Failed to connect to model ({model_name}). Details: {last_error}"}
-
-def query_image_api(payload, model_name):
-    # Image models usually stay on the standard URL, but we can force one if needed
-    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
         return None
+        
     headers = {"Authorization": f"Bearer {hf_token}"}
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
@@ -118,28 +108,31 @@ with tab1:
         script_input = st.text_area("Input Scene Text", height=300, placeholder="INT. ROOM - NIGHT...")
         
         if st.button("🚀 Analyze Script", type="primary"):
-            with st.spinner("Analyzing..."):
-                # 1. Summary (Using Facebook BART - The gold standard for summaries)
-                summ_payload = {"inputs": script_input, "parameters": {"max_new_tokens": 150}}
-                summ_response = query_text_api_robust(summ_payload, "facebook/bart-large-cnn")
-                
-                # 2. Logline (Using Microsoft Phi-3 - Very reliable on new Router)
-                log_prompt = f"Read this and write a 1-sentence logline: {script_input}"
-                log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 60}}
-                log_response = query_text_api_robust(log_payload, "microsoft/Phi-3-mini-4k-instruct")
+            if not script_input:
+                st.warning("Please paste text first.")
+            else:
+                with st.spinner("Analyzing..."):
+                    # 1. Summary (Using Zephyr to summarize)
+                    summ_prompt = f"<|user|>Summarize this movie scene in 2 sentences:\n{script_input}<|assistant|>"
+                    summ_payload = {"inputs": summ_prompt, "parameters": {"max_new_tokens": 150, "return_full_text": False}}
+                    summ_response = query_text_api(summ_payload)
+                    
+                    # 2. Logline (Using Zephyr to write logline)
+                    log_prompt = f"<|user|>Write a one-sentence logline for this scene:\n{script_input}<|assistant|>"
+                    log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 60, "return_full_text": False}}
+                    log_response = query_text_api(log_payload)
 
-                # Handle Summary Response
-                if isinstance(summ_response, list):
-                    st.session_state.summary_result = summ_response[0].get('summary_text', 'Error')
-                elif isinstance(summ_response, dict) and "error" in summ_response:
-                    st.error(f"Summary Error: {summ_response['error']}")
+                    # Handle Summary
+                    if isinstance(summ_response, list):
+                        st.session_state.summary_result = summ_response[0].get('generated_text', '')
+                    elif "error" in summ_response:
+                        st.error(summ_response['error'])
 
-                # Handle Logline Response
-                if isinstance(log_response, list):
-                    full_text = log_response[0].get('generated_text', '')
-                    st.session_state.logline_result = full_text.replace(log_prompt, "").strip()
-                elif isinstance(log_response, dict) and "error" in log_response:
-                    st.error(f"Logline Error: {log_response['error']}")
+                    # Handle Logline
+                    if isinstance(log_response, list):
+                        st.session_state.logline_result = log_response[0].get('generated_text', '')
+                    elif "error" in log_response:
+                        st.error(log_response['error'])
 
     with col_output:
         st.markdown("#### Report")
@@ -160,8 +153,7 @@ with tab2:
     if st.button("🎨 Generate Image", type="primary"):
         with st.spinner("Rendering..."):
             full_prompt = f"{sb_style} style, {sb_prompt}, 8k masterpiece, detailed"
-            # Using Stable Diffusion v1.5
-            image_bytes = query_image_api({"inputs": full_prompt}, "runwayml/stable-diffusion-v1-5")
+            image_bytes = query_image_api({"inputs": full_prompt})
             
             if image_bytes:
                 try:
@@ -188,14 +180,16 @@ with tab3:
 
     if st.button("✨ Write Scene", type="primary"):
         with st.spinner("Writing script..."):
-            # Prompt engineered for Phi-3
-            script_prompt = f"""<|user|>
-            Write a movie scene in standard screenplay format about:
-            Genre: {genre}
-            Character: {character}
-            Setting: {setting}
-            Conflict: {conflict}
-            <|assistant|>"""
+            # Prompt engineered for Zephyr
+            script_prompt = f"""<|system|>
+You are a professional screenwriter. Write a movie scene in standard screenplay format.
+<|user|>
+Write a scene with the following details:
+Genre: {genre}
+Character: {character}
+Setting: {setting}
+Conflict: {conflict}
+<|assistant|>"""
             
             payload = {
                 "inputs": script_prompt,
@@ -205,14 +199,13 @@ with tab3:
                 }
             }
             
-            # Using Microsoft Phi-3 (Reliable)
-            response = query_text_api_robust(payload, "microsoft/Phi-3-mini-4k-instruct")
+            response = query_text_api(payload)
             
             if isinstance(response, list):
                 generated = response[0].get('generated_text', '')
                 st.session_state.generated_script = generated
                 st.success("Done!")
-            elif isinstance(response, dict) and "error" in response:
+            elif "error" in response:
                 st.error(response["error"])
 
     if st.session_state.generated_script:
