@@ -1,4 +1,4 @@
-import streamlit as st
+\import streamlit as st
 from huggingface_hub import InferenceClient
 import io
 from PIL import Image
@@ -12,34 +12,39 @@ st.set_page_config(
 )
 
 # --- API SETUP ---
-# We check for the token immediately
 try:
     hf_token = st.secrets["HF_TOKEN"]
 except:
     st.error("⚠️ HF_TOKEN not found in Secrets. The app will not work.")
     st.stop()
 
-# --- API FUNCTIONS (Using Official Library) ---
+# --- API FUNCTIONS (Using Chat Completion) ---
 
 @st.cache_data(show_spinner=False)
 def get_llm_response(prompt, max_tokens=500):
     """
-    Uses the official Hugging Face Client. 
-    This automatically handles URL routing to avoid 404/410 errors.
-    Model: Qwen/Qwen2.5-72B-Instruct (Very smart, currently free)
+    Uses the official Hugging Face Client with CHAT COMPLETION.
+    This fixes the "Task not supported" error.
+    Model: Zephyr-7b-beta (Reliable & Free)
     """
-    repo_id = "Qwen/Qwen2.5-72B-Instruct" 
+    repo_id = "HuggingFaceH4/zephyr-7b-beta"
     
     try:
-        client = InferenceClient(model=repo_id, token=hf_token)
+        client = InferenceClient(token=hf_token)
         
-        response = client.text_generation(
-            prompt, 
-            max_new_tokens=max_tokens,
-            temperature=0.7,
-            return_full_text=False
+        # We format the prompt as a chat message
+        messages = [{"role": "user", "content": prompt}]
+        
+        response = client.chat_completion(
+            model=repo_id,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7
         )
-        return response
+        
+        # Extract the actual text from the chat response
+        return response.choices[0].message.content
+        
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -51,8 +56,9 @@ def get_image_response(prompt):
     repo_id = "runwayml/stable-diffusion-v1-5"
     
     try:
-        client = InferenceClient(model=repo_id, token=hf_token)
-        image = client.text_to_image(prompt)
+        client = InferenceClient(token=hf_token)
+        # Direct text_to_image call
+        image = client.text_to_image(prompt, model=repo_id)
         return image
     except Exception as e:
         return None
@@ -103,7 +109,7 @@ with tab1:
             if not script_input:
                 st.warning("Please paste text first.")
             else:
-                with st.spinner("Analyzing... (Qwen is thinking)"):
+                with st.spinner("Analyzing..."):
                     # 1. Summary
                     summ_prompt = f"Summarize this movie scene in 2 sentences:\n\n{script_input}"
                     summ_response = get_llm_response(summ_prompt, max_tokens=150)
