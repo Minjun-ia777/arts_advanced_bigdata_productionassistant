@@ -12,10 +12,13 @@ st.set_page_config(
 )
 
 # --- API FUNCTIONS ---
-# We cache text results so we don't waste API calls on the same text
+
+# 1. Text Function (Updated URL)
 @st.cache_data(show_spinner=False)
 def query_text_api(payload, model_name):
-    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
+    # NEW URL HERE:
+    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+    
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
@@ -28,13 +31,16 @@ def query_text_api(payload, model_name):
     except Exception as e:
         return {"error": f"Connection error: {str(e)}"}
 
-# We DO NOT cache images because we might want to generate different versions
+# 2. Image Function (Updated URL)
 def query_image_api(payload, model_name):
-    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
+    # NEW URL HERE:
+    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+    
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
         return None
+        
     headers = {"Authorization": f"Bearer {hf_token}"}
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
@@ -70,7 +76,6 @@ st.title("🎬 AI Pre-Production Assistant")
 st.markdown("##### Transform your film ideas into scripts and storyboards instantly.")
 
 # --- INITIALIZE SESSION STATE ---
-# This keeps your data visible even if you switch tabs
 if 'summary_result' not in st.session_state: st.session_state.summary_result = ""
 if 'logline_result' not in st.session_state: st.session_state.logline_result = ""
 if 'generated_script' not in st.session_state: st.session_state.generated_script = ""
