@@ -1,8 +1,7 @@
 import streamlit as st
-import requests
+from huggingface_hub import InferenceClient
 import io
 from PIL import Image
-import json
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -12,58 +11,50 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- API FUNCTIONS ---
+# --- API SETUP ---
+# We check for the token immediately
+try:
+    hf_token = st.secrets["HF_TOKEN"]
+except:
+    st.error("⚠️ HF_TOKEN not found in Secrets. The app will not work.")
+    st.stop()
+
+# --- API FUNCTIONS (Using Official Library) ---
 
 @st.cache_data(show_spinner=False)
-def query_text_api(payload):
+def get_llm_response(prompt, max_tokens=500):
     """
-    Uses the Zephyr model for all text generation.
-    This is the most stable configuration for the Free Tier.
+    Uses the official Hugging Face Client. 
+    This automatically handles URL routing to avoid 404/410 errors.
+    Model: Qwen/Qwen2.5-72B-Instruct (Very smart, currently free)
     """
-    # URL: New Router (Required)
-    # MODEL: Zephyr-7b-beta (Reliable)
-    API_URL = "https://router.huggingface.co/hf-inference/models/HuggingFaceH4/zephyr-7b-beta"
+    repo_id = "Qwen/Qwen2.5-72B-Instruct" 
     
     try:
-        hf_token = st.secrets["HF_TOKEN"]
-    except:
-        return {"error": "⚠️ Token missing. Check .streamlit/secrets.toml"}
-    
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload)
+        client = InferenceClient(model=repo_id, token=hf_token)
         
-        # If successful
-        if response.status_code == 200:
-            return response.json()
-        
-        # If loading
-        elif "loading" in response.text.lower():
-             return {"error": "⏳ Model is loading... (Wait 30s and try again)"}
-        
-        # Other errors
-        else:
-            return {"error": f"API Error {response.status_code}: {response.text}"}
-            
+        response = client.text_generation(
+            prompt, 
+            max_new_tokens=max_tokens,
+            temperature=0.7,
+            return_full_text=False
+        )
+        return response
     except Exception as e:
-        return {"error": f"Connection error: {str(e)}"}
+        return f"Error: {str(e)}"
 
-def query_image_api(payload):
-    # URL: New Router
-    # MODEL: Stable Diffusion v1.5
-    API_URL = "https://router.huggingface.co/hf-inference/models/runwayml/stable-diffusion-v1-5"
+def get_image_response(prompt):
+    """
+    Uses the official Hugging Face Client for Images.
+    Model: Stable Diffusion v1.5
+    """
+    repo_id = "runwayml/stable-diffusion-v1-5"
     
     try:
-        hf_token = st.secrets["HF_TOKEN"]
-    except:
-        return None
-        
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload)
-        return response.content
-    except:
+        client = InferenceClient(model=repo_id, token=hf_token)
+        image = client.text_to_image(prompt)
+        return image
+    except Exception as e:
         return None
 
 # --- SIDEBAR ---
@@ -74,10 +65,11 @@ with st.sidebar:
     **Status:** 🟢 System Ready
     
     **1. 🔑 Setup**
-    Ensure Token is in Secrets.
+    Ensure `HF_TOKEN` is in Secrets.
     
-    **2. ⚠️ Troubleshooting**
-    If you see "Model is loading," wait 30 seconds and click again. This is normal for free accounts!
+    **2. ⚠️ Loading Times**
+    If the model is "cold," it might take 60s to load. 
+    This is normal for the free tier.
     """)
     st.divider()
     st.caption("Final Project 2025")
@@ -111,35 +103,30 @@ with tab1:
             if not script_input:
                 st.warning("Please paste text first.")
             else:
-                with st.spinner("Analyzing..."):
-                    # 1. Summary (Using Zephyr to summarize)
-                    summ_prompt = f"<|user|>Summarize this movie scene in 2 sentences:\n{script_input}<|assistant|>"
-                    summ_payload = {"inputs": summ_prompt, "parameters": {"max_new_tokens": 150, "return_full_text": False}}
-                    summ_response = query_text_api(summ_payload)
+                with st.spinner("Analyzing... (Qwen is thinking)"):
+                    # 1. Summary
+                    summ_prompt = f"Summarize this movie scene in 2 sentences:\n\n{script_input}"
+                    summ_response = get_llm_response(summ_prompt, max_tokens=150)
                     
-                    # 2. Logline (Using Zephyr to write logline)
-                    log_prompt = f"<|user|>Write a one-sentence logline for this scene:\n{script_input}<|assistant|>"
-                    log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 60, "return_full_text": False}}
-                    log_response = query_text_api(log_payload)
+                    # 2. Logline
+                    log_prompt = f"Write a one-sentence logline/pitch for this scene:\n\n{script_input}"
+                    log_response = get_llm_response(log_prompt, max_tokens=60)
 
-                    # Handle Summary
-                    if isinstance(summ_response, list):
-                        st.session_state.summary_result = summ_response[0].get('generated_text', '')
-                    elif "error" in summ_response:
-                        st.error(summ_response['error'])
-
-                    # Handle Logline
-                    if isinstance(log_response, list):
-                        st.session_state.logline_result = log_response[0].get('generated_text', '')
-                    elif "error" in log_response:
-                        st.error(log_response['error'])
+                    # Save to session
+                    st.session_state.summary_result = summ_response
+                    st.session_state.logline_result = log_response
 
     with col_output:
         st.markdown("#### Report")
         if st.session_state.summary_result:
-            st.success(f"**Summary:**\n{st.session_state.summary_result}")
+            if "Error" in st.session_state.summary_result:
+                st.error(st.session_state.summary_result)
+            else:
+                st.success(f"**Summary:**\n{st.session_state.summary_result}")
+                
         if st.session_state.logline_result:
-            st.info(f"**Logline:**\n{st.session_state.logline_result}")
+            if "Error" not in st.session_state.logline_result:
+                st.info(f"**Logline:**\n{st.session_state.logline_result}")
 
 # ==========================================
 # TAB 2: STORYBOARDER
@@ -147,22 +134,21 @@ with tab1:
 with tab2:
     st.markdown("### 🖌️ Visuals")
     
-    sb_prompt = st.text_input("Shot Description:", value=st.session_state.logline_result)
+    # Use logline as default prompt
+    default_prompt = st.session_state.logline_result if "Error" not in st.session_state.logline_result else ""
+    
+    sb_prompt = st.text_input("Shot Description:", value=default_prompt)
     sb_style = st.selectbox("Style:", ["Cinematic", "Anime", "Cyberpunk", "Oil Painting"])
     
     if st.button("🎨 Generate Image", type="primary"):
         with st.spinner("Rendering..."):
             full_prompt = f"{sb_style} style, {sb_prompt}, 8k masterpiece, detailed"
-            image_bytes = query_image_api({"inputs": full_prompt})
+            image = get_image_response(full_prompt)
             
-            if image_bytes:
-                try:
-                    image = Image.open(io.BytesIO(image_bytes))
-                    st.image(image, caption=sb_style, use_container_width=True)
-                except:
-                    st.error("Model is loading. Try again in 30 seconds.")
+            if image:
+                st.image(image, caption=sb_style, use_container_width=True)
             else:
-                st.error("Image generation failed. Check Token.")
+                st.error("Image generation failed. The model might be loading or busy.")
 
 # ==========================================
 # TAB 3: STORY GENERATOR
@@ -180,33 +166,24 @@ with tab3:
 
     if st.button("✨ Write Scene", type="primary"):
         with st.spinner("Writing script..."):
-            # Prompt engineered for Zephyr
-            script_prompt = f"""<|system|>
-You are a professional screenwriter. Write a movie scene in standard screenplay format.
-<|user|>
-Write a scene with the following details:
-Genre: {genre}
-Character: {character}
-Setting: {setting}
-Conflict: {conflict}
-<|assistant|>"""
+            script_prompt = f"""
+            You are a professional screenwriter. Write a movie scene in standard screenplay format.
             
-            payload = {
-                "inputs": script_prompt,
-                "parameters": {
-                    "max_new_tokens": 600,
-                    "return_full_text": False
-                }
-            }
+            Details:
+            Genre: {genre}
+            Character: {character}
+            Setting: {setting}
+            Conflict: {conflict}
             
-            response = query_text_api(payload)
+            Output ONLY the script.
+            """
             
-            if isinstance(response, list):
-                generated = response[0].get('generated_text', '')
-                st.session_state.generated_script = generated
-                st.success("Done!")
-            elif "error" in response:
-                st.error(response["error"])
+            response = get_llm_response(script_prompt, max_tokens=700)
+            
+            if "Error" in response:
+                st.error(response)
+            else:
+                st.session_state.generated_script = response
 
     if st.session_state.generated_script:
         st.text_area("Script:", value=st.session_state.generated_script, height=600)
