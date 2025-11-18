@@ -3,112 +3,112 @@ import requests
 import io
 from PIL import Image
 
-# --- Page Configuration ---
-st.set_page_config(page_title="AI Pre-Production Assistant", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="AI Pre-Production Assistant", page_icon="🎬", layout="wide")
 
-# --- Function to Query Hugging Face API ---
-def query_api(payload, model_name, api_type="text"):
-    """
-    Sends a request to the Hugging Face Inference API.
-    """
+# --- LESSON 2: CACHING ---
+# We use @st.cache_data so we don't call the API unnecessarily if the input hasn't changed.
+# We DO NOT cache the image generation because we might want different results for the same prompt.
+@st.cache_data(show_spinner=False)
+def query_text_api(payload, model_name):
+    """Dedicated function for Text models with caching"""
     API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
-    
-    # Get the token from Streamlit Secrets
-    # If running locally, you can hardcode it temporarily, but for deployment use Secrets!
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
-        st.error("Error: HF_TOKEN not found in Secrets. Please set it in Streamlit Cloud settings.")
-        return None
-
+        return {"error": "Token not found"}
+        
     headers = {"Authorization": f"Bearer {hf_token}"}
     
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
+        return response.json()
     except Exception as e:
-        st.error(f"Connection Error: {e}")
-        return None
+        return {"error": str(e)}
 
-    # Handle Model Loading (Common in free tier)
-    if response.status_code == 503:
-        st.warning(f"Model {model_name} is currently loading. Please wait 30 seconds and try again.")
+def query_image_api(payload, model_name):
+    """Dedicated function for Image models (No caching to allow variations)"""
+    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
+    try:
+        hf_token = st.secrets["HF_TOKEN"]
+    except:
         return None
         
-    if response.status_code != 200:
-        st.error(f"API Error {response.status_code}: {response.text}")
+    headers = {"Authorization": f"Bearer {hf_token}"}
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload)
+        return response.content
+    except:
         return None
 
-    # Return appropriate data type
-    if api_type == "image":
-        return response.content # Raw bytes for images
-    else:
-        return response.json()  # JSON for text
-
-# --- Main App UI ---
+# --- MAIN APP ---
 st.title("🎬 AI Pre-Production Assistant")
-st.markdown("### Your Co-Developer for Scripts & Storyboards")
-st.info("This app uses free AI models to help you analyze scripts and visualize scenes.")
+st.markdown("### Professional Film Development Tool")
 
-# Create Tabs
+# --- LESSON 3: SESSION STATE ---
+# Initialize session state to store results so they don't disappear
+if 'summary_result' not in st.session_state:
+    st.session_state.summary_result = ""
+if 'logline_result' not in st.session_state:
+    st.session_state.logline_result = ""
+
 tab1, tab2 = st.tabs(["📝 AI Script Doctor", "🎨 AI Storyboarder"])
 
-# --- TAB 1: SCRIPT DOCTOR ---
+# --- TAB 1 ---
 with tab1:
-    st.header("Script Analysis")
-    script_input = st.text_area("Paste a scene from your script here:", height=250, 
-                               placeholder="INT. DINER - NIGHT\nA rainy night. JOHN sits alone...")
-
-    if script_input:
-        col1, col2 = st.columns(2)
+    col_input, col_output = st.columns([1, 1])
+    
+    with col_input:
+        st.subheader("Script Input")
+        script_input = st.text_area("Paste Scene:", height=300, placeholder="INT. ROOM - DAY...")
         
-        # 1. Summarization
-        with col1:
-            if st.button("Summarize Scene"):
-                with st.spinner("Reading script..."):
-                    payload = {"inputs": script_input}
-                    # Model: Facebook BART (Great for summarization)
-                    summary_data = query_api(payload, "facebook/bart-large-cnn", "text")
+        if st.button("Analyze Script"):
+            if script_input:
+                with st.spinner("Analyzing..."):
+                    # --- LESSON 1: TOKEN PARAMETERS ---
+                    # 1. Summarization
+                    summ_payload = {
+                        "inputs": script_input,
+                        "parameters": {"max_new_tokens": 150, "min_length": 30}
+                    }
+                    summ_response = query_text_api(summ_payload, "facebook/bart-large-cnn")
                     
-                    if summary_data and isinstance(summary_data, list):
-                        summary_text = summary_data[0].get('summary_text', 'Error parsing summary.')
-                        st.success(f"**Summary:** {summary_text}")
+                    # 2. Logline Generation (Using Mistral)
+                    log_prompt = f"Write a one-sentence logline for this movie scene:\n\n{script_input}"
+                    log_payload = {
+                        "inputs": log_prompt,
+                        "parameters": {"max_new_tokens": 50, "temperature": 0.8}
+                    }
+                    log_response = query_text_api(log_payload, "mistralai/Mistral-7B-Instruct-v0.2")
 
-        # 2. Emotion Analysis
-        with col2:
-            if st.button("Analyze Mood"):
-                with st.spinner("Analyzing emotions..."):
-                    payload = {"inputs": script_input}
-                    # Model: Roberta Emotion (Great for emotion detection)
-                    emotion_data = query_api(payload, "j-hartmann/emotion-english-distilroberta-base", "text")
+                    # Save to session state
+                    if isinstance(summ_response, list):
+                        st.session_state.summary_result = summ_response[0].get('summary_text', 'Error')
                     
-                    if emotion_data:
-                        # The API returns a list of lists, we flatten it
-                        emotions = emotion_data[0] 
-                        # Find the highest scoring emotion
-                        top_emotion = max(emotions, key=lambda x: x['score'])
-                        st.success(f"**Dominant Mood:** {top_emotion['label'].upper()} ({int(top_emotion['score']*100)}%)")
+                    if isinstance(log_response, list):
+                         # Cleaning up Mistral output
+                        full_text = log_response[0].get('generated_text', '')
+                        st.session_state.logline_result = full_text.replace(log_prompt, "").strip()
 
-# --- TAB 2: STORYBOARDER ---
+    with col_output:
+        st.subheader("Analysis Results")
+        # Display results from Session State (Memory)
+        if st.session_state.summary_result:
+            st.info(f"**Summary:** {st.session_state.summary_result}")
+        
+        if st.session_state.logline_result:
+            st.success(f"**Logline:** {st.session_state.logline_result}")
+
+# --- TAB 2 ---
 with tab2:
-    st.header("Storyboard Generator")
-    st.markdown("Turn a description into a storyboard frame.")
+    st.subheader("Visual Development")
+    sb_prompt = st.text_input("Scene Description:", value=st.session_state.logline_result)
+    sb_style = st.selectbox("Style:", ["Cinematic", "Anime", "Cyberpunk", "Watercolor"])
     
-    # User Inputs
-    sb_prompt = st.text_input("Scene Description:", placeholder="A futuristic city with neon lights, cinematic lighting")
-    sb_style = st.selectbox("Select Style:", ["Cinematic", "Anime", "Sketch", "Cyberpunk", "Oil Painting"])
-    
-    if st.button("Generate Image"):
-        if not sb_prompt:
-            st.warning("Please enter a description first.")
-        else:
-            with st.spinner("Drawing your storyboard... (This might take a minute)"):
-                # Combine style and prompt for better results
-                final_prompt = f"{sb_style} style, {sb_prompt}, high quality, detailed"
-                
-                payload = {"inputs": final_prompt}
-                # Model: Stable Diffusion v1.5 (Best general purpose free model)
-                image_bytes = query_api(payload, "runwayml/stable-diffusion-v1-5", "image")
-                
-                if image_bytes:
-                    image = Image.open(io.BytesIO(image_bytes))
-                    st.image(image, caption=f"Generated Storyboard: {sb_prompt}")
+    if st.button("Generate Storyboard"):
+        with st.spinner("Rendering..."):
+            full_prompt = f"{sb_style} style, {sb_prompt}, detailed, 8k"
+            image_bytes = query_image_api({"inputs": full_prompt}, "runwayml/stable-diffusion-v1-5")
+            
+            if image_bytes:
+                image = Image.open(io.BytesIO(image_bytes))
+                st.image(image, caption=full_prompt, use_container_width=True)
