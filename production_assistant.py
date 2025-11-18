@@ -12,12 +12,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- API FUNCTIONS ---
-# 1. Text Function
+# --- API FUNCTIONS (UPDATED FOR NEW ROUTER) ---
+
 @st.cache_data(show_spinner=False)
 def query_text_api(payload, model_name):
-    # BACK TO STANDARD URL (Most stable)
-    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
+    # 1. USE THE NEW ROUTER URL
+    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
     
     try:
         hf_token = st.secrets["HF_TOKEN"]
@@ -29,7 +29,7 @@ def query_text_api(payload, model_name):
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
         
-        # CHECK: Did we get a JSON response?
+        # 2. ROBUST ERROR CHECKING
         try:
             return response.json()
         except json.JSONDecodeError:
@@ -38,10 +38,9 @@ def query_text_api(payload, model_name):
     except Exception as e:
         return {"error": f"Connection error: {str(e)}"}
 
-# 2. Image Function
 def query_image_api(payload, model_name):
-    # BACK TO STANDARD URL
-    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
+    # USE THE NEW ROUTER URL
+    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
@@ -113,11 +112,11 @@ with tab1:
                 st.warning("⚠️ Please paste a script scene first.")
             else:
                 with st.spinner("Reading your script..."):
-                    # 1. Summary (BART Model - Very Stable)
+                    # 1. Summary (BART Model - Works on Router)
                     summ_payload = {"inputs": script_input, "parameters": {"max_new_tokens": 150}}
                     summ_response = query_text_api(summ_payload, "facebook/bart-large-cnn")
                     
-                    # 2. Logline (SWITCHED MODEL to Zephyr-7b-beta)
+                    # 2. Logline (Zephyr Model - Works on Router)
                     log_prompt = f"Summarize this movie scene into a one-sentence logline:\n{script_input}"
                     log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 50}}
                     log_response = query_text_api(log_payload, "HuggingFaceH4/zephyr-7b-beta")
@@ -129,9 +128,8 @@ with tab1:
                         st.error(f"Summary Error: {summ_response['error']}")
 
                     if isinstance(log_response, list):
-                        # Zephyr returns text differently, usually in 'generated_text'
+                        # Zephyr output handling
                         full_text = log_response[0].get('generated_text', '')
-                        # Clean up the prompt from the answer
                         clean_text = full_text.replace(log_prompt, "").strip()
                         st.session_state.logline_result = clean_text
                     elif isinstance(log_response, dict) and "error" in log_response:
@@ -210,7 +208,7 @@ with tab3:
             st.warning("⚠️ Please provide at least a Character and a Setting.")
         else:
             with st.spinner("Writing screenplay... (This may take 60 seconds)"):
-                # NEW: Prompt specifically for Zephyr
+                # Prompt for Zephyr
                 script_prompt = f"""<|system|>
                 You are a professional screenwriter. Write a movie scene in standard screenplay format.
                 <|user|>
@@ -232,10 +230,10 @@ with tab3:
                     }
                 }
                 
-                # SWITCHED MODEL: Zephyr-7b-beta (Free and supported)
+                # USE ZEPHYR (Works on Router)
                 response = query_text_api(payload, "HuggingFaceH4/zephyr-7b-beta")
                 
-                # Robust Error Handling
+                # Error Handling
                 if isinstance(response, list):
                     generated_text = response[0].get('generated_text', '')
                     st.session_state.generated_script = generated_text
