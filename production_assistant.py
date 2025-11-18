@@ -24,15 +24,12 @@ except:
 def get_llm_response(prompt, max_tokens=500):
     """
     Model: Qwen2.5-7B-Instruct
-    Why? It is free, requires no permissions, and is widely supported on the free tier.
     """
-    # SWITCHING TO QWEN 7B (The most reliable free model right now)
     repo_id = "Qwen/Qwen2.5-7B-Instruct" 
     
     try:
         client = InferenceClient(token=hf_token)
         
-        # Format prompt for Qwen
         messages = [{"role": "user", "content": prompt}]
         
         response = client.chat_completion(
@@ -49,15 +46,22 @@ def get_llm_response(prompt, max_tokens=500):
 
 def get_image_response(prompt):
     """
-    Model: Stable Diffusion v1.5
+    Model: stabilityai/stable-diffusion-xl-base-1.0 (More robust image model)
     """
-    repo_id = "runwayml/stable-diffusion-v1-5"
+    # SWITCHING TO STABLE DIFFUSION XL (SDXL) for better results and stability
+    repo_id = "stabilityai/stable-diffusion-xl-base-1.0"
     
     try:
         client = InferenceClient(token=hf_token)
-        image = client.text_to_image(prompt, model=repo_id)
+        # Pass the model argument explicitly to text_to_image
+        image = client.text_to_image(prompt, model=repo_id) 
         return image
     except Exception as e:
+        # Catch specific errors for better feedback
+        if "model is currently loading" in str(e).lower():
+            return "loading_error"
+        elif "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+            return "busy_error"
         return None
 
 # --- SIDEBAR ---
@@ -71,7 +75,7 @@ with st.sidebar:
     Ensure `HF_TOKEN` is in Secrets.
     
     **2. ⚠️ Loading Times**
-    If the model is "cold," it might take 60s to load. 
+    If a model is "cold," it might take 60s to load. 
     This is normal for the free tier.
     """)
     st.divider()
@@ -144,14 +148,21 @@ with tab2:
     sb_style = st.selectbox("Style:", ["Cinematic", "Anime", "Cyberpunk", "Oil Painting"])
     
     if st.button("🎨 Generate Image", type="primary"):
-        with st.spinner("Rendering..."):
-            full_prompt = f"{sb_style} style, {sb_prompt}, 8k masterpiece, detailed"
-            image = get_image_response(full_prompt)
-            
-            if image:
-                st.image(image, caption=sb_style, use_container_width=True)
-            else:
-                st.error("Image generation failed. The model might be loading or busy.")
+        if not sb_prompt:
+            st.warning("Please describe the shot first.")
+        else:
+            with st.spinner("Rendering high-resolution frame... (This might take 30-60s the first time!)"):
+                full_prompt = f"{sb_style} style, {sb_prompt}, 8k masterpiece, highly detailed, dramatic lighting"
+                image = get_image_response(full_prompt)
+                
+                if image == "loading_error":
+                    st.warning("⏳ Image model is loading. Please wait 30-60 seconds and try again.")
+                elif image == "busy_error":
+                    st.warning("⚠️ Image model is busy. Please try again in a moment.")
+                elif image:
+                    st.image(image, caption=sb_style, use_container_width=True)
+                else:
+                    st.error("Image generation failed for an unknown reason. Try simplifying your prompt.")
 
 # ==========================================
 # TAB 3: STORY GENERATOR
@@ -168,25 +179,28 @@ with tab3:
         conflict = st.text_input("Conflict", placeholder="e.g. No oxygen")
 
     if st.button("✨ Write Scene", type="primary"):
-        with st.spinner("Writing script..."):
-            script_prompt = f"""
-            You are a professional screenwriter. Write a movie scene in standard screenplay format.
-            
-            Details:
-            Genre: {genre}
-            Character: {character}
-            Setting: {setting}
-            Conflict: {conflict}
-            
-            Output ONLY the script.
-            """
-            
-            response = get_llm_response(script_prompt, max_tokens=700)
-            
-            if "Error" in response:
-                st.error(response)
-            else:
-                st.session_state.generated_script = response
+        if not character or not setting:
+            st.warning("Please provide at least a Character and a Setting.")
+        else:
+            with st.spinner("Writing script..."):
+                script_prompt = f"""
+                You are a professional screenwriter. Write a movie scene in standard screenplay format.
+                
+                Details:
+                Genre: {genre}
+                Character: {character}
+                Setting: {setting}
+                Conflict: {conflict}
+                
+                Output ONLY the script.
+                """
+                
+                response = get_llm_response(script_prompt, max_tokens=700)
+                
+                if "Error" in response:
+                    st.error(response)
+                else:
+                    st.session_state.generated_script = response
 
     if st.session_state.generated_script:
         st.text_area("Script:", value=st.session_state.generated_script, height=600)
