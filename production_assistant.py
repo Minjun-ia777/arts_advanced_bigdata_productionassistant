@@ -12,12 +12,12 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- API FUNCTIONS (Fixed URL + Robust Error Handling) ---
-
+# --- API FUNCTIONS ---
+# 1. Text Function
 @st.cache_data(show_spinner=False)
 def query_text_api(payload, model_name):
-    # FIXED URL: Using the new Router URL
-    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+    # BACK TO STANDARD URL (Most stable)
+    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
     
     try:
         hf_token = st.secrets["HF_TOKEN"]
@@ -29,19 +29,19 @@ def query_text_api(payload, model_name):
     try:
         response = requests.post(API_URL, headers=headers, json=payload)
         
-        # CRITICAL FIX: Check if response is actually JSON
+        # CHECK: Did we get a JSON response?
         try:
             return response.json()
         except json.JSONDecodeError:
-            # If not JSON, return the raw error text so we can see what's wrong
             return {"error": f"API Error: {response.text}"}
             
     except Exception as e:
         return {"error": f"Connection error: {str(e)}"}
 
+# 2. Image Function
 def query_image_api(payload, model_name):
-    # FIXED URL: Using the new Router URL
-    API_URL = f"https://router.huggingface.co/hf-inference/models/{model_name}"
+    # BACK TO STANDARD URL
+    API_URL = f"https://api-inference.huggingface.co/models/{model_name}"
     try:
         hf_token = st.secrets["HF_TOKEN"]
     except:
@@ -54,7 +54,7 @@ def query_image_api(payload, model_name):
     except:
         return None
 
-# --- SIDEBAR INSTRUCTIONS (Restored!) ---
+# --- SIDEBAR INSTRUCTIONS ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2503/2503508.png", width=50)
     st.title("User Guide")
@@ -71,7 +71,7 @@ with st.sidebar:
     * **Story Generator:** Write new ideas from scratch.
     
     **3. ⚠️ Troubleshooting**
-    If you see "Model Loading," wait 30 seconds and try again. Free models sometimes sleep!
+    If you see "Model Loading," wait 30 seconds and try again.
     """)
     
     st.divider()
@@ -113,11 +113,11 @@ with tab1:
                 st.warning("⚠️ Please paste a script scene first.")
             else:
                 with st.spinner("Reading your script..."):
-                    # 1. Summary (BART)
+                    # 1. Summary (BART Model - Very Stable)
                     summ_payload = {"inputs": script_input, "parameters": {"max_new_tokens": 150}}
                     summ_response = query_text_api(summ_payload, "facebook/bart-large-cnn")
                     
-                    # 2. Logline (Switched to Zephyr for reliability)
+                    # 2. Logline (SWITCHED MODEL to Zephyr-7b-beta)
                     log_prompt = f"Summarize this movie scene into a one-sentence logline:\n{script_input}"
                     log_payload = {"inputs": log_prompt, "parameters": {"max_new_tokens": 50}}
                     log_response = query_text_api(log_payload, "HuggingFaceH4/zephyr-7b-beta")
@@ -129,8 +129,11 @@ with tab1:
                         st.error(f"Summary Error: {summ_response['error']}")
 
                     if isinstance(log_response, list):
+                        # Zephyr returns text differently, usually in 'generated_text'
                         full_text = log_response[0].get('generated_text', '')
-                        st.session_state.logline_result = full_text.replace(log_prompt, "").strip()
+                        # Clean up the prompt from the answer
+                        clean_text = full_text.replace(log_prompt, "").strip()
+                        st.session_state.logline_result = clean_text
                     elif isinstance(log_response, dict) and "error" in log_response:
                         st.error(f"Logline Error: {log_response['error']}")
 
@@ -186,7 +189,7 @@ with tab2:
                     st.error("Error generating image. Check your Token.")
 
 # ==========================================
-# TAB 3: STORY GENERATOR (Restored UI + Fixed Logic)
+# TAB 3: STORY GENERATOR
 # ==========================================
 with tab3:
     st.markdown("### 🧬 AI Screenwriter")
@@ -207,7 +210,7 @@ with tab3:
             st.warning("⚠️ Please provide at least a Character and a Setting.")
         else:
             with st.spinner("Writing screenplay... (This may take 60 seconds)"):
-                # NEW: Prompt engineering specifically for Zephyr model
+                # NEW: Prompt specifically for Zephyr
                 script_prompt = f"""<|system|>
                 You are a professional screenwriter. Write a movie scene in standard screenplay format.
                 <|user|>
@@ -223,13 +226,13 @@ with tab3:
                 payload = {
                     "inputs": script_prompt,
                     "parameters": {
-                        "max_new_tokens": 700,
+                        "max_new_tokens": 500,
                         "temperature": 0.8,
                         "return_full_text": False
                     }
                 }
                 
-                # Switched to Zephyr-7b-beta (More reliable on free tier than Mistral v0.2)
+                # SWITCHED MODEL: Zephyr-7b-beta (Free and supported)
                 response = query_text_api(payload, "HuggingFaceH4/zephyr-7b-beta")
                 
                 # Robust Error Handling
