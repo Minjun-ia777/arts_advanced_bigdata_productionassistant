@@ -137,8 +137,6 @@ def optimize_prompt_magic(user_prompt, provider):
     return get_llm_response(system_prompt, 150, provider)
 
 # --- PDF GENERATORS ---
-
-# 1. Hollywood Script Format (For Tab 1 & Full Package)
 class ScreenplayPDF(FPDF):
     def header(self):
         self.set_font('Courier', '', 12)
@@ -219,30 +217,23 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
 
     return pdf.output(dest="S").encode("latin-1")
 
-# 2. General Report Format (For Tab 2 & 3 individual downloads)
 def create_report_pdf(title, content_dict):
     """Creates a simple report PDF for Analysis or Shot Lists"""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # Title
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, title, ln=True, align='C')
     pdf.ln(10)
-    
-    # Content Loop
     pdf.set_font("Arial", '', 12)
     for section, text in content_dict.items():
         if text:
             pdf.set_font("Arial", 'B', 12)
             pdf.cell(0, 10, section.upper(), ln=True)
             pdf.set_font("Arial", '', 11)
-            # Remove markdown syntax usually returned by LLMs
             clean_text = text.replace("**", "").replace("#", "")
             pdf.multi_cell(0, 6, clean_text)
             pdf.ln(5)
-            
     return pdf.output(dest="S").encode("latin-1")
 
 # --- SIDEBAR SETTINGS ---
@@ -363,13 +354,12 @@ with tab1:
         st.subheader("📜 Generated Script")
         st.code(st.session_state.generated_script, language="plaintext")
         
-        # TAB 1 SPECIFIC PDF DOWNLOAD
         pdf_bytes = create_hollywood_pdf(
             st.session_state.generated_script, 
             "Generated Script (Story Generator)", 
             None, None
         )
-        st.download_button("📥 Download Script PDF", pdf_bytes, "script.pdf", "application/pdf")
+        st.download_button("📥 Download Script PDF Only", pdf_bytes, "script.pdf", "application/pdf")
 
 # ==========================================
 # TAB 2: SCRIPT DOCTOR
@@ -445,14 +435,13 @@ with tab2:
         if st.session_state.color_palette_result:
             with st.expander("🎨 Color Palette", expanded=True):
                 st.markdown(st.session_state.color_palette_result)
-                st.download_button("📥 Download CSV", st.session_state.color_palette_result, "palette.csv", "text/csv")
+                st.download_button("📥 Download Palette CSV", st.session_state.color_palette_result, "palette.csv", "text/csv")
 
     with c_out2:
         if st.session_state.music_result:
             with st.expander("🎵 Music Suggestions", expanded=True):
                 st.markdown(st.session_state.music_result)
     
-    # TAB 2 SPECIFIC PDF DOWNLOAD (Analysis Report)
     if st.session_state.summary_result:
         report_data = {
             "Summary": st.session_state.summary_result,
@@ -461,7 +450,7 @@ with tab2:
             "Music": st.session_state.music_result
         }
         pdf_bytes = create_report_pdf("Script Analysis Report", report_data)
-        st.download_button("📥 Download Analysis PDF", pdf_bytes, "analysis_report.pdf", "application/pdf")
+        st.download_button("📥 Download Analysis Report PDF", pdf_bytes, "analysis_report.pdf", "application/pdf")
 
 # ==========================================
 # TAB 3: SHOT LIST MAKER
@@ -499,13 +488,12 @@ with tab3:
     if st.session_state.shotlist_result:
         st.markdown(st.session_state.shotlist_result)
         
-        # TAB 3 SPECIFIC DOWNLOADS
         c_dl1, c_dl2 = st.columns(2)
         with c_dl1:
             st.download_button("📥 Download Shot List (.md)", st.session_state.shotlist_result, "shotlist.md")
         with c_dl2:
             pdf_bytes = create_report_pdf("Shot List", {"Content": st.session_state.shotlist_result})
-            st.download_button("📥 Download Shot List (.pdf)", pdf_bytes, "shotlist.pdf", "application/pdf")
+            st.download_button("📥 Download Shot List PDF", pdf_bytes, "shotlist.pdf", "application/pdf")
 
 # ==========================================
 # TAB 4: STORYBOARDER
@@ -561,34 +549,46 @@ with tab4:
                 else:
                     st.error("Generation failed.")
     
-    # TAB 4 SPECIFIC DOWNLOAD (Storyboard PDF)
     if st.session_state.generated_image:
         pdf_bytes = create_hollywood_pdf(
-            "", # No script
-            f"Storyboard: {sb_style} | {sb_prompt}", # Use Logline space for prompt info
+            "", 
+            f"Storyboard: {sb_style} | {sb_prompt}", 
             st.session_state.generated_image,
             None
         )
-        st.download_button("📥 Download Storyboard PDF", pdf_bytes, "storyboard.pdf", "application/pdf")
+        st.download_button("📥 Download Storyboard PDF Only", pdf_bytes, "storyboard.pdf", "application/pdf")
 
 # --- EXPORT SECTION ---
 st.divider()
-c_ex1, c_ex2 = st.columns([3, 1])
-with c_ex1:
+with st.container(border=True):
     st.markdown("#### 📦 Export Full Production Package")
-    st.caption("Download EVERYTHING (Script, Logline, Storyboard, Shot List) in one PDF.")
-with c_ex2:
-    if st.session_state.generated_script:
-        pdf_bytes = create_hollywood_pdf(
-            st.session_state.generated_script, 
-            st.session_state.logline_result or "Generated Script",
-            st.session_state.generated_image,
-            st.session_state.shotlist_result 
-        )
-        st.download_button(
-            "🎬 Download Full PDF",
-            pdf_bytes,
-            "production_report.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
+    st.markdown("This combines **Script**, **Logline**, **Storyboard**, and **Shot List** into one professional PDF document.")
+    st.info("ℹ️ **Tip:** If you only want to download specific items (like just the script), use the download buttons inside the tabs above.")
+    
+    col_ex1, col_ex2 = st.columns([3, 1])
+    with col_ex1:
+        st.caption("Requirements: You must at least have a **Script** (generated in Tab 1 or pasted in Tab 2). Other assets are optional.")
+    with col_ex2:
+        # Check if we have enough content to print
+        has_content = st.session_state.generated_script or (script_input and len(script_input) > 10)
+        
+        if has_content:
+            # Use generated script OR pasted input
+            final_script = st.session_state.generated_script if st.session_state.generated_script else script_input
+            
+            pdf_bytes = create_hollywood_pdf(
+                final_script, 
+                st.session_state.logline_result or "Production Report",
+                st.session_state.generated_image,
+                st.session_state.shotlist_result 
+            )
+            st.download_button(
+                "🎬 Download Full PDF",
+                pdf_bytes,
+                "production_report.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
+        else:
+            st.warning("⚠️ No script found. Please Generate (Tab 1) or Paste (Tab 2) a script to export.")
