@@ -17,21 +17,20 @@ st.set_page_config(
 )
 
 # --- GLOBAL USAGE TRACKER (Server-Side Memory) ---
-# This dictionary lives on the server and survives browser refreshes
 @st.cache_resource
 def get_global_usage_db():
     return {}
 
 # --- USER IDENTIFICATION ---
-# Check if user has an ID in the URL. If not, give them one.
 if "user_id" not in st.query_params:
-    new_id = str(uuid.uuid4())[:8] # Generate a short unique ID
+    new_id = str(uuid.uuid4())[:8]
     st.query_params["user_id"] = new_id
 
 user_id = st.query_params["user_id"]
 
 # --- CONFIGURATION & LIMITS ---
 FREE_TIER_DAILY_LIMIT = 20
+RESET_TIME_MSG = "09:00 AM KST (00:00 UTC)"
 
 # --- API SETUP ---
 try:
@@ -43,39 +42,27 @@ except:
 # --- HELPER FUNCTIONS ---
 
 def check_usage_limit():
-    """
-    Checks global server usage for this specific user_id.
-    Resets if the day has changed.
-    """
-    # 1. Bypass for Premium
+    """Checks usage and displays specific time reset message."""
     if st.session_state.get('openai_api_key'):
         return True
 
-    # 2. Get the Global Database
     db = get_global_usage_db()
     today_str = datetime.date.today().isoformat()
 
-    # 3. Initialize User if new
     if user_id not in db:
         db[user_id] = {"count": 0, "date": today_str}
     
     user_data = db[user_id]
 
-    # 4. Check for Day Reset
     if user_data["date"] != today_str:
         user_data["count"] = 0
         user_data["date"] = today_str
     
-    # 5. Check Limits
     usage = user_data["count"]
     percent = usage / FREE_TIER_DAILY_LIMIT
-
-    # We increment here tentatively (visual check), 
-    # but the real increment happens inside the button logic usually.
-    # To keep it simple, we just return status here.
     
     if usage >= FREE_TIER_DAILY_LIMIT:
-        st.error(f"❌ Daily Limit Reached ({usage}/{FREE_TIER_DAILY_LIMIT}). Wait until tomorrow or use Premium.")
+        st.error(f"❌ Daily quota achieved. Resets at {RESET_TIME_MSG}. Please use your OpenAI API Key to continue.")
         return False
     elif percent >= 0.75:
         st.toast(f"⚠️ Warning: 75% of free quota used ({usage}/{FREE_TIER_DAILY_LIMIT}).", icon="⚠️")
@@ -83,14 +70,12 @@ def check_usage_limit():
     return True
 
 def increment_usage():
-    """Call this ONLY when an API call is actually successful"""
     if not st.session_state.get('openai_api_key'):
         db = get_global_usage_db()
         if user_id in db:
             db[user_id]["count"] += 1
 
 def get_current_usage():
-    """Helper to get count for UI display"""
     db = get_global_usage_db()
     if user_id in db:
         return db[user_id]["count"]
@@ -165,14 +150,14 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
     pdf.set_left_margin(38)
     pdf.set_right_margin(25)
     
-    # Logline Section
+    # Logline
     pdf.set_font("Courier", 'B', 12)
     pdf.cell(0, 10, "LOGLINE:", ln=True)
     pdf.set_font("Courier", '', 12)
     pdf.multi_cell(0, 6, logline)
     pdf.ln(10)
     
-    # Image Section
+    # Image
     if image:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
@@ -180,7 +165,7 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
             pdf.image(tmp_file.name, x=38, w=140) 
         pdf.ln(15)
 
-    # Script Section
+    # Script
     pdf.set_font("Courier", 'B', 12)
     pdf.cell(0, 10, "SCENE SCRIPT:", ln=True)
     pdf.ln(5)
@@ -195,37 +180,30 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
             pdf.ln(5)
             is_dialogue_block = False
             continue
-        # Scene Heading (INT./EXT.)
         if line.startswith("INT.") or line.startswith("EXT.") or line.startswith("I/E."):
             pdf.set_font("Courier", 'B', 12)
             pdf.set_x(38)
             pdf.cell(0, 5, line.upper(), ln=True)
             pdf.set_font("Courier", '', 12)
             is_dialogue_block = False
-        # Character Name (Centered)
         elif line.isupper() and len(line) < 40 and not is_dialogue_block:
             pdf.set_x(94)
             pdf.cell(0, 5, line, ln=True)
             is_dialogue_block = True
-        # Parenthetical
         elif line.startswith("(") and line.endswith(")"):
             pdf.set_x(79)
             pdf.cell(0, 5, line, ln=True)
-        # Dialogue
         elif is_dialogue_block:
             pdf.set_x(63)
             pdf.multi_cell(90, 5, line)
-        # Transition
         elif line.endswith("TO:") and line.isupper():
             pdf.set_x(152)
             pdf.cell(0, 5, line, ln=True)
-        # Action
         else:
             pdf.set_x(38)
             pdf.multi_cell(0, 5, line)
             is_dialogue_block = False
 
-    # Shot List Appendix
     if shotlist:
         pdf.add_page()
         pdf.set_font("Courier", 'B', 12)
@@ -269,10 +247,12 @@ with st.sidebar:
     # 3. Usage Monitor
     if api_choice == "Free (Hugging Face)":
         st.subheader("📊 Daily Quota")
-        # Get count from Global DB
         u_count = get_current_usage()
         st.progress(min(u_count / FREE_TIER_DAILY_LIMIT, 1.0))
         st.caption(f"{u_count}/{FREE_TIER_DAILY_LIMIT} requests used")
+        
+        if u_count >= 15:
+            st.warning(f"Reset: {RESET_TIME_MSG}")
 
     st.divider()
     
@@ -295,6 +275,7 @@ if 'generated_image' not in st.session_state: st.session_state.generated_image =
 if 'breakdown_result' not in st.session_state: st.session_state.breakdown_result = ""
 if 'music_result' not in st.session_state: st.session_state.music_result = ""
 if 'shotlist_result' not in st.session_state: st.session_state.shotlist_result = ""
+if 'color_palette_result' not in st.session_state: st.session_state.color_palette_result = ""
 
 # --- TABS ---
 tab1, tab2, tab3, tab4 = st.tabs(["✨ Story Generator", "📝 Script Doctor", "🎥 Shot List Maker", "🎨 Storyboarder"])
@@ -316,6 +297,18 @@ with tab1:
         conflict = st.text_input("Conflict", placeholder="e.g. Bomb ticking")
         tone = st.selectbox("Tone", ["Serious", "Funny", "Dark", "Surreal"])
 
+    # NEW: SCRIPT LENGTH TOGGLE
+    st.divider()
+    length_opt = st.radio("Script Length:", ["Short (1 Minute)", "Long (3 Minutes / Dialogue Heavy)"], horizontal=True)
+    
+    if length_opt == "Long (3 Minutes / Dialogue Heavy)":
+        st.warning("⚠️ Note: Long scripts use more processing power and may take up to 2 minutes to generate.")
+        max_tok = 2000
+        len_prompt = "Write a LONG, DETAILED scene (approx 3 pages)."
+    else:
+        max_tok = 800
+        len_prompt = "Write a concise 1-minute scene."
+
     if st.button("✨ Write Scene", type="primary", use_container_width=True):
         if not check_usage_limit(): st.stop()
         
@@ -332,11 +325,12 @@ with tab1:
                 Parameters:
                 Genre: {genre} | Era: {time_period} | Tone: {tone}
                 Character: {character} | Setting: {setting} | Conflict: {conflict}
+                Length: {len_prompt}
                 Output ONLY the script content.
                 """
-                response = get_llm_response(script_prompt, 1000, api_choice)
+                response = get_llm_response(script_prompt, max_tok, api_choice)
                 if not "Error" in response:
-                    increment_usage() # Increment only on success
+                    increment_usage()
                 st.session_state.generated_script = response
 
     if st.session_state.generated_script:
@@ -361,7 +355,7 @@ with tab2:
         analysis_tone = st.selectbox("Logline Tone", ["Professional", "Mysterious", "Dramatic"])
     with c2:
         tasks = st.multiselect("Analysis Tasks", 
-                               ["Summarize", "Generate Logline", "Scene Breakdown", "Music Suggestions"],
+                               ["Summarize", "Generate Logline", "Scene Breakdown", "Music Suggestions", "Color Palette"],
                                default=["Summarize", "Generate Logline"])
         
     if st.button("🚀 Analyze Script", type="primary"):
@@ -391,6 +385,17 @@ with tab2:
                     music_prompt = f"Suggest a musical score (Genre, Instruments, Tempo, Reference Track) for:\n{script_input}"
                     st.session_state.music_result = get_llm_response(music_prompt, 300, api_choice)
                     success = True
+
+                # NEW: COLOR PALETTE LOGIC
+                if "Color Palette" in tasks:
+                    color_prompt = f"""
+                    Analyze the mood of this script and generate a 5-color palette for color grading.
+                    Format exactly like this CSV:
+                    Color Name, Hex Code, Rationale
+                    Script: {script_input}
+                    """
+                    st.session_state.color_palette_result = get_llm_response(color_prompt, 300, api_choice)
+                    success = True
                 
                 if success:
                     increment_usage()
@@ -406,6 +411,12 @@ with tab2:
         if st.session_state.breakdown_result:
             with st.expander("📂 Scene Breakdown", expanded=True):
                 st.markdown(st.session_state.breakdown_result)
+        # NEW: COLOR PALETTE CSV DOWNLOAD
+        if st.session_state.color_palette_result:
+            with st.expander("🎨 Color Grading Palette", expanded=True):
+                st.markdown(st.session_state.color_palette_result)
+                st.download_button("📥 Download Palette CSV", st.session_state.color_palette_result, "palette.csv", "text/csv")
+
     with c_out2:
         if st.session_state.music_result:
             with st.expander("🎵 Music Score Suggestions", expanded=True):
@@ -446,6 +457,7 @@ with tab3:
 
     if st.session_state.shotlist_result:
         st.markdown(st.session_state.shotlist_result)
+        st.download_button("📥 Download Shot List", st.session_state.shotlist_result, "shotlist.md")
 
 # ==========================================
 # TAB 4: STORYBOARDER
@@ -457,7 +469,6 @@ with tab4:
     if use_auto_context and st.session_state.logline_result:
         sb_default = st.session_state.logline_result
     
-    # RESTORED: Advanced Camera Controls
     c1, c2 = st.columns([3, 1])
     with c1:
         sb_prompt = st.text_input("Shot Description", value=sb_default)
@@ -473,6 +484,9 @@ with tab4:
         lens = st.selectbox("Lens", ["35mm", "85mm Portrait", "Fisheye", "Anamorphic"])
 
     use_magic = st.toggle("✨ Use Prompt Magic", value=True)
+    
+    if use_magic:
+        st.info("ℹ️ **Prompt Magic:** Uses AI to rewrite your description into a professional photography prompt before generating the image.")
 
     if st.button("🎨 Generate Image", type="primary"):
         if not check_usage_limit(): st.stop()
