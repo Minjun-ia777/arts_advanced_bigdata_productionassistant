@@ -5,6 +5,8 @@ from PIL import Image
 from openai import OpenAI
 from fpdf import FPDF
 import time
+import datetime
+import uuid
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -14,9 +16,22 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- GLOBAL USAGE TRACKER (Server-Side Memory) ---
+# This dictionary lives on the server and survives browser refreshes
+@st.cache_resource
+def get_global_usage_db():
+    return {}
+
+# --- USER IDENTIFICATION ---
+# Check if user has an ID in the URL. If not, give them one.
+if "user_id" not in st.query_params:
+    new_id = str(uuid.uuid4())[:8] # Generate a short unique ID
+    st.query_params["user_id"] = new_id
+
+user_id = st.query_params["user_id"]
+
 # --- CONFIGURATION & LIMITS ---
 FREE_TIER_DAILY_LIMIT = 20
-if 'usage_count' not in st.session_state: st.session_state.usage_count = 0
 
 # --- API SETUP ---
 try:
@@ -28,17 +43,58 @@ except:
 # --- HELPER FUNCTIONS ---
 
 def check_usage_limit():
-    if not st.session_state.get('openai_api_key'):
-        st.session_state.usage_count += 1
-        usage = st.session_state.usage_count
-        percent = usage / FREE_TIER_DAILY_LIMIT
-        
-        if percent >= 1.0:
-            st.error(f"❌ Daily Limit Reached ({usage}/{FREE_TIER_DAILY_LIMIT}). Wait 24h or use Premium.")
-            return False
-        elif percent >= 0.75:
-            st.toast(f"⚠️ Warning: 75% of free quota used.", icon="⚠️")
+    """
+    Checks global server usage for this specific user_id.
+    Resets if the day has changed.
+    """
+    # 1. Bypass for Premium
+    if st.session_state.get('openai_api_key'):
+        return True
+
+    # 2. Get the Global Database
+    db = get_global_usage_db()
+    today_str = datetime.date.today().isoformat()
+
+    # 3. Initialize User if new
+    if user_id not in db:
+        db[user_id] = {"count": 0, "date": today_str}
+    
+    user_data = db[user_id]
+
+    # 4. Check for Day Reset
+    if user_data["date"] != today_str:
+        user_data["count"] = 0
+        user_data["date"] = today_str
+    
+    # 5. Check Limits
+    usage = user_data["count"]
+    percent = usage / FREE_TIER_DAILY_LIMIT
+
+    # We increment here tentatively (visual check), 
+    # but the real increment happens inside the button logic usually.
+    # To keep it simple, we just return status here.
+    
+    if usage >= FREE_TIER_DAILY_LIMIT:
+        st.error(f"❌ Daily Limit Reached ({usage}/{FREE_TIER_DAILY_LIMIT}). Wait until tomorrow or use Premium.")
+        return False
+    elif percent >= 0.75:
+        st.toast(f"⚠️ Warning: 75% of free quota used ({usage}/{FREE_TIER_DAILY_LIMIT}).", icon="⚠️")
+    
     return True
+
+def increment_usage():
+    """Call this ONLY when an API call is actually successful"""
+    if not st.session_state.get('openai_api_key'):
+        db = get_global_usage_db()
+        if user_id in db:
+            db[user_id]["count"] += 1
+
+def get_current_usage():
+    """Helper to get count for UI display"""
+    db = get_global_usage_db()
+    if user_id in db:
+        return db[user_id]["count"]
+    return 0
 
 @st.cache_data(show_spinner=False)
 def get_llm_response(prompt, max_tokens=700, provider="Free (Hugging Face)"):
@@ -175,7 +231,6 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
         pdf.set_font("Courier", 'B', 12)
         pdf.cell(0, 10, "APPENDIX: SHOT LIST", ln=True)
         pdf.set_font("Courier", '', 10)
-        # Clean up markdown table syntax for PDF text
         clean_shotlist = shotlist.replace("|", "  ").replace("---", "")
         pdf.multi_cell(0, 5, clean_shotlist)
 
@@ -214,13 +269,14 @@ with st.sidebar:
     # 3. Usage Monitor
     if api_choice == "Free (Hugging Face)":
         st.subheader("📊 Daily Quota")
-        u_count = st.session_state.usage_count
+        # Get count from Global DB
+        u_count = get_current_usage()
         st.progress(min(u_count / FREE_TIER_DAILY_LIMIT, 1.0))
         st.caption(f"{u_count}/{FREE_TIER_DAILY_LIMIT} requests used")
 
     st.divider()
     
-    # 4. Credits (RESTORED)
+    # 4. Credits
     st.markdown("### ℹ️ About")
     st.caption("Designed & Built for Final Project 2025")
     st.caption("**Powered by:**")
@@ -279,6 +335,8 @@ with tab1:
                 Output ONLY the script content.
                 """
                 response = get_llm_response(script_prompt, 1000, api_choice)
+                if not "Error" in response:
+                    increment_usage() # Increment only on success
                 st.session_state.generated_script = response
 
     if st.session_state.generated_script:
@@ -313,21 +371,29 @@ with tab2:
             st.warning("Paste text first.")
         else:
             with st.spinner("Analyzing..."):
+                success = False
                 if "Summarize" in tasks:
                     summ_prompt = f"Summarize this scene in 2 bullet points:\n{script_input}"
                     st.session_state.summary_result = get_llm_response(summ_prompt, 200, api_choice)
+                    success = True
                 
                 if "Generate Logline" in tasks:
                     log_prompt = f"Write a {analysis_tone} logline for this:\n{script_input}"
                     st.session_state.logline_result = get_llm_response(log_prompt, 100, api_choice)
+                    success = True
                 
                 if "Scene Breakdown" in tasks:
                     bd_prompt = f"List Characters, Props, and Sounds for this script:\n{script_input}"
                     st.session_state.breakdown_result = get_llm_response(bd_prompt, 300, api_choice)
+                    success = True
                     
                 if "Music Suggestions" in tasks:
                     music_prompt = f"Suggest a musical score (Genre, Instruments, Tempo, Reference Track) for:\n{script_input}"
                     st.session_state.music_result = get_llm_response(music_prompt, 300, api_choice)
+                    success = True
+                
+                if success:
+                    increment_usage()
 
     # OUTPUTS
     if st.session_state.summary_result:
@@ -373,7 +439,10 @@ with tab3:
                 Format as a Markdown Table with columns: | Shot # | Size | Angle | Movement | Description |
                 Script: {shot_input}
                 """
-                st.session_state.shotlist_result = get_llm_response(sl_prompt, 800, api_choice)
+                response = get_llm_response(sl_prompt, 800, api_choice)
+                if not "Error" in response:
+                    increment_usage()
+                st.session_state.shotlist_result = response
 
     if st.session_state.shotlist_result:
         st.markdown(st.session_state.shotlist_result)
@@ -412,7 +481,6 @@ with tab4:
             st.warning("Describe the shot.")
         else:
             with st.spinner("Dreaming..."):
-                # RESTORED: Construct full prompt with camera details
                 base_prompt = f"{sb_style} style, {angle}, {sb_prompt}, {lighting} lighting, shot on {lens}"
                 
                 final_prompt = base_prompt
@@ -423,6 +491,7 @@ with tab4:
                 image = get_image_response(final_prompt)
                 
                 if image and not isinstance(image, str):
+                    increment_usage()
                     st.session_state.generated_image = image
                     st.image(image, caption=f"Storyboard: {sb_style}", use_container_width=True)
                 elif image == "loading_error":
