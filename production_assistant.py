@@ -28,21 +28,16 @@ except:
 # --- HELPER FUNCTIONS ---
 
 def check_usage_limit():
-    """Checks if user has exceeded free tier limits and displays warnings."""
-    # Only limit usage if NOT using OpenAI
     if not st.session_state.get('openai_api_key'):
         st.session_state.usage_count += 1
         usage = st.session_state.usage_count
         percent = usage / FREE_TIER_DAILY_LIMIT
         
         if percent >= 1.0:
-            st.error(f"❌ Daily Limit Reached ({usage}/{FREE_TIER_DAILY_LIMIT}). Please wait 24h or use Premium.")
+            st.error(f"❌ Daily Limit Reached ({usage}/{FREE_TIER_DAILY_LIMIT}). Wait 24h or use Premium.")
             return False
         elif percent >= 0.75:
-            st.toast(f"⚠️ Warning: 75% of free quota used ({usage}/{FREE_TIER_DAILY_LIMIT}).", icon="⚠️")
-        elif percent >= 0.50:
-            st.toast(f"ℹ️ Notice: 50% of free quota used.", icon="ℹ️")
-            
+            st.toast(f"⚠️ Warning: 75% of free quota used.", icon="⚠️")
     return True
 
 @st.cache_data(show_spinner=False)
@@ -87,18 +82,18 @@ def get_image_response(prompt):
         elif "rate limit" in str(e).lower(): return "busy_error"
         return None
 
-# --- NEW: PROMPT MAGIC (CHAIN OF THOUGHT) ---
+# --- PROMPT MAGIC ---
 def optimize_prompt_magic(user_prompt, provider):
     system_prompt = f"""
     Act as an expert Prompt Engineer for Stable Diffusion XL.
     Rewrite the following user description into a high-quality image generation prompt.
     User Description: "{user_prompt}"
     Rules:
-    1. Add keywords for lighting (e.g., volumetric, cinematic).
-    2. Add keywords for style (e.g., 8k, masterpiece, photorealistic).
+    1. Keep the artistic style keywords.
+    2. Add specific lighting and camera details.
     3. Return ONLY the raw prompt text.
     """
-    return get_llm_response(system_prompt, 100, provider)
+    return get_llm_response(system_prompt, 150, provider)
 
 # --- STUDIOBINDER HOLLYWOOD PDF FORMAT ---
 class ScreenplayPDF(FPDF):
@@ -107,23 +102,21 @@ class ScreenplayPDF(FPDF):
         self.cell(0, 10, f'{self.page_no()}.', 0, 0, 'R')
         self.ln(10)
 
-def create_hollywood_pdf(script_text, logline, image=None):
+def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
     pdf = ScreenplayPDF(format='Letter')
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=25)
-    
-    # Margins: Left 1.5", Right 1.0"
     pdf.set_left_margin(38)
     pdf.set_right_margin(25)
     
-    # Logline
+    # Logline Section
     pdf.set_font("Courier", 'B', 12)
     pdf.cell(0, 10, "LOGLINE:", ln=True)
     pdf.set_font("Courier", '', 12)
     pdf.multi_cell(0, 6, logline)
     pdf.ln(10)
     
-    # Image
+    # Image Section
     if image:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
@@ -131,11 +124,11 @@ def create_hollywood_pdf(script_text, logline, image=None):
             pdf.image(tmp_file.name, x=38, w=140) 
         pdf.ln(15)
 
+    # Script Section
     pdf.set_font("Courier", 'B', 12)
     pdf.cell(0, 10, "SCENE SCRIPT:", ln=True)
     pdf.ln(5)
     
-    # Script Parsing
     pdf.set_font("Courier", '', 12)
     lines = script_text.split('\n')
     is_dialogue_block = False
@@ -146,30 +139,45 @@ def create_hollywood_pdf(script_text, logline, image=None):
             pdf.ln(5)
             is_dialogue_block = False
             continue
-            
+        # Scene Heading (INT./EXT.)
         if line.startswith("INT.") or line.startswith("EXT.") or line.startswith("I/E."):
             pdf.set_font("Courier", 'B', 12)
             pdf.set_x(38)
             pdf.cell(0, 5, line.upper(), ln=True)
             pdf.set_font("Courier", '', 12)
             is_dialogue_block = False
+        # Character Name (Centered)
         elif line.isupper() and len(line) < 40 and not is_dialogue_block:
-            pdf.set_x(94) # Character indent
+            pdf.set_x(94)
             pdf.cell(0, 5, line, ln=True)
             is_dialogue_block = True
+        # Parenthetical
         elif line.startswith("(") and line.endswith(")"):
-            pdf.set_x(79) # Parenthetical
+            pdf.set_x(79)
             pdf.cell(0, 5, line, ln=True)
+        # Dialogue
         elif is_dialogue_block:
-            pdf.set_x(63) # Dialogue indent
+            pdf.set_x(63)
             pdf.multi_cell(90, 5, line)
+        # Transition
         elif line.endswith("TO:") and line.isupper():
-            pdf.set_x(152) # Transition
+            pdf.set_x(152)
             pdf.cell(0, 5, line, ln=True)
+        # Action
         else:
-            pdf.set_x(38) # Action
+            pdf.set_x(38)
             pdf.multi_cell(0, 5, line)
             is_dialogue_block = False
+
+    # Shot List Appendix
+    if shotlist:
+        pdf.add_page()
+        pdf.set_font("Courier", 'B', 12)
+        pdf.cell(0, 10, "APPENDIX: SHOT LIST", ln=True)
+        pdf.set_font("Courier", '', 10)
+        # Clean up markdown table syntax for PDF text
+        clean_shotlist = shotlist.replace("|", "  ").replace("---", "")
+        pdf.multi_cell(0, 5, clean_shotlist)
 
     return pdf.output(dest="S").encode("latin-1")
 
@@ -178,7 +186,7 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2503/2503508.png", width=50)
     st.title("Settings")
     
-    # API Selection
+    # 1. API Choice
     st.subheader("⚙️ AI Engine")
     api_choice = st.radio("Choose Provider:", ["Free (Hugging Face)", "Premium (OpenAI)"])
     
@@ -191,35 +199,34 @@ with st.sidebar:
         st.session_state.openai_api_key = None
         st.info("ℹ️ Using Free Tier.")
 
-    # USAGE MONITOR (RESTORED)
+    st.divider()
+
+    # 2. Memory Settings
+    st.subheader("🧠 Memory")
+    use_auto_context = st.toggle("Enable Auto-Context", value=True)
+    if use_auto_context:
+        st.caption("✅ **On:** App remembers your script across tabs.")
+    else:
+        st.caption("🚫 **Off:** Tabs work independently.")
+
+    st.divider()
+
+    # 3. Usage Monitor
     if api_choice == "Free (Hugging Face)":
-        st.divider()
-        st.subheader("📊 Daily Free Quota")
+        st.subheader("📊 Daily Quota")
         u_count = st.session_state.usage_count
-        
-        # Color logic for progress bar
-        bar_color = "green"
-        if u_count >= 15: bar_color = "red"
-        elif u_count >= 10: bar_color = "orange"
-        
         st.progress(min(u_count / FREE_TIER_DAILY_LIMIT, 1.0))
         st.caption(f"{u_count}/{FREE_TIER_DAILY_LIMIT} requests used")
-        
-        if u_count >= 15:
-            st.warning("⚠️ Approaching limit!")
 
     st.divider()
     
-    # CREDITS (RESTORED)
+    # 4. Credits (RESTORED)
     st.markdown("### ℹ️ About")
     st.caption("Designed & Built for Final Project 2025")
     st.caption("**Powered by:**")
-    st.markdown("- Hugging Face (Inference API)")
-    st.markdown("- Streamlit Cloud")
-    st.markdown("- Qwen 2.5 & Stable Diffusion XL")
-    
-    st.divider()
-    st.caption("© 2025 AI Pre-Production Assistant")
+    st.markdown("- Hugging Face Inference")
+    st.markdown("- Qwen 2.5 (LLM)")
+    st.markdown("- Stable Diffusion XL")
 
 # --- MAIN HEADER ---
 st.title("🎬 AI Pre-Production Assistant")
@@ -230,124 +237,28 @@ if 'logline_result' not in st.session_state: st.session_state.logline_result = "
 if 'generated_script' not in st.session_state: st.session_state.generated_script = ""
 if 'generated_image' not in st.session_state: st.session_state.generated_image = None
 if 'breakdown_result' not in st.session_state: st.session_state.breakdown_result = ""
+if 'music_result' not in st.session_state: st.session_state.music_result = ""
+if 'shotlist_result' not in st.session_state: st.session_state.shotlist_result = ""
 
 # --- TABS ---
-tab1, tab2, tab3 = st.tabs(["📝 Script Doctor", "🎨 Storyboarder", "✨ Story Generator"])
+tab1, tab2, tab3, tab4 = st.tabs(["✨ Story Generator", "📝 Script Doctor", "🎥 Shot List Maker", "🎨 Storyboarder"])
 
 # ==========================================
-# TAB 1: SCRIPT DOCTOR
+# TAB 1: STORY GENERATOR
 # ==========================================
 with tab1:
-    st.markdown("### 🩺 Analyze & Fix Scripts")
-    
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        script_input = st.text_area("Paste Scene Text", height=300, placeholder="INT. COFFEE SHOP - DAY...")
-    with c2:
-        st.markdown("**Tools**")
-        analysis_tone = st.selectbox("Logline Tone", ["Professional", "Mysterious", "Dramatic"])
-        do_breakdown = st.checkbox("Generate Scene Breakdown", help="Extracts props and characters")
-        
-        if st.button("🚀 Analyze", type="primary", use_container_width=True):
-            if not check_usage_limit(): st.stop()
-            
-            if not script_input:
-                st.warning("Paste text first.")
-            else:
-                with st.spinner("Analyzing..."):
-                    summ_prompt = f"Summarize this scene in 2 bullet points:\n{script_input}"
-                    summ_response = get_llm_response(summ_prompt, 200, api_choice)
-                    
-                    log_prompt = f"Write a {analysis_tone} logline for this:\n{script_input}"
-                    log_response = get_llm_response(log_prompt, 100, api_choice)
-                    
-                    st.session_state.summary_result = summ_response
-                    st.session_state.logline_result = log_response
-                    
-                    if do_breakdown:
-                        bd_prompt = f"""
-                        Analyze this script scene and list:
-                        1. Characters (Names)
-                        2. Props (Objects mentioned)
-                        3. Sound/VFX Notes
-                        
-                        Script: {script_input}
-                        """
-                        st.session_state.breakdown_result = get_llm_response(bd_prompt, 300, api_choice)
-
-    # OUTPUTS
-    if st.session_state.summary_result:
-        st.divider()
-        col_A, col_B = st.columns(2)
-        with col_A:
-            st.subheader("Summary")
-            st.success(st.session_state.summary_result)
-        with col_B:
-            st.subheader("Logline")
-            st.info(st.session_state.logline_result)
-            
-        if st.session_state.breakdown_result:
-            with st.expander("📂 Scene Breakdown (Props & Characters)"):
-                st.markdown(st.session_state.breakdown_result)
-
-# ==========================================
-# TAB 2: STORYBOARDER
-# ==========================================
-with tab2:
-    st.markdown("### 🖌️ Visual Development")
-    
-    default_prompt = st.session_state.logline_result if "Error" not in st.session_state.logline_result else ""
-    
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        sb_prompt = st.text_input("Shot Description", value=default_prompt)
-    with c2:
-        sb_style = st.selectbox("Style", ["Cinematic", "Anime", "Cyberpunk", "Oil Painting", "Noir"])
-    
-    use_magic = st.toggle("✨ Use Prompt Magic (Chain of Thought)", value=True, help="AI will rewrite your prompt to be more professional.")
-
-    if st.button("🎨 Generate Image", type="primary"):
-        if not check_usage_limit(): st.stop()
-        
-        if not sb_prompt:
-            st.warning("Describe the shot first.")
-        else:
-            with st.spinner("Dreaming..."):
-                final_prompt = f"{sb_style} style, {sb_prompt}"
-                
-                if use_magic:
-                    with st.status("✨ Optimizing prompt with AI..."):
-                        optimized = optimize_prompt_magic(final_prompt, api_choice)
-                        st.write(f"**Original:** {final_prompt}")
-                        st.write(f"**Optimized:** {optimized}")
-                        final_prompt = optimized 
-                
-                image = get_image_response(final_prompt)
-                
-                if image and not isinstance(image, str):
-                    st.session_state.generated_image = image
-                    st.image(image, caption="Generated Storyboard", use_container_width=True)
-                elif image == "loading_error":
-                    st.warning("⏳ Image model is loading. Wait 30s.")
-                else:
-                    st.error("Image generation failed.")
-
-# ==========================================
-# TAB 3: STORY GENERATOR
-# ==========================================
-with tab3:
     st.markdown("### 🧬 AI Screenwriter")
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        genre = st.selectbox("Genre", ["Sci-Fi", "Horror", "Comedy", "Thriller"])
-        time_period = st.selectbox("Era", ["Modern", "Future", "1980s", "Medieval"])
+        genre = st.selectbox("Genre", ["Sci-Fi", "Horror", "Comedy", "Thriller", "Drama"])
+        time_period = st.selectbox("Era", ["Modern", "Future", "1980s", "Medieval", "Western"])
     with c2:
         character = st.text_input("Protagonist", placeholder="e.g. A retired spy")
         setting = st.text_input("Setting", placeholder="e.g. A bunker")
     with c3:
         conflict = st.text_input("Conflict", placeholder="e.g. Bomb ticking")
-        tone = st.selectbox("Tone", ["Serious", "Funny", "Dark"])
+        tone = st.selectbox("Tone", ["Serious", "Funny", "Dark", "Surreal"])
 
     if st.button("✨ Write Scene", type="primary", use_container_width=True):
         if not check_usage_limit(): st.stop()
@@ -361,39 +272,182 @@ with tab3:
                 STRICT FORMATTING RULES:
                 1. Scene Headings must be ALL CAPS (e.g. INT. ROOM - NIGHT)
                 2. Character Names must be ALL CAPS centered above dialogue.
-                3. Do not use bold or markdown in the output, just plain text.
-                4. Write dialogue clearly.
                 
                 Parameters:
                 Genre: {genre} | Era: {time_period} | Tone: {tone}
                 Character: {character} | Setting: {setting} | Conflict: {conflict}
-                Output ONLY the script content. No intros.
+                Output ONLY the script content.
                 """
                 response = get_llm_response(script_prompt, 1000, api_choice)
                 st.session_state.generated_script = response
 
     if st.session_state.generated_script:
         st.divider()
-        st.subheader("📜 Final Script")
+        st.subheader("📜 Generated Script")
         st.code(st.session_state.generated_script, language="plaintext")
+
+# ==========================================
+# TAB 2: SCRIPT DOCTOR
+# ==========================================
+with tab2:
+    st.markdown("### 🩺 Analyze & Fix Scripts")
+    
+    default_text = ""
+    if use_auto_context and st.session_state.generated_script:
+        default_text = st.session_state.generated_script
         
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            st.download_button(
-                "📥 Download .txt",
-                st.session_state.generated_script,
-                "script.txt"
-            )
-        with col_d2:
-            pdf_bytes = create_hollywood_pdf(
-                st.session_state.generated_script, 
-                st.session_state.logline_result or "Generated Script",
-                st.session_state.generated_image 
-            )
-            st.download_button(
-                "🎬 Export StudioBinder PDF",
-                pdf_bytes,
-                "hollywood_script.pdf",
-                mime="application/pdf",
-                help="Exports in Standard Industry Format (Courier, margins, sluglines)."
-            )
+    script_input = st.text_area("Scene Text", value=default_text, height=300, placeholder="Paste script here...")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        analysis_tone = st.selectbox("Logline Tone", ["Professional", "Mysterious", "Dramatic"])
+    with c2:
+        tasks = st.multiselect("Analysis Tasks", 
+                               ["Summarize", "Generate Logline", "Scene Breakdown", "Music Suggestions"],
+                               default=["Summarize", "Generate Logline"])
+        
+    if st.button("🚀 Analyze Script", type="primary"):
+        if not check_usage_limit(): st.stop()
+        
+        if not script_input:
+            st.warning("Paste text first.")
+        else:
+            with st.spinner("Analyzing..."):
+                if "Summarize" in tasks:
+                    summ_prompt = f"Summarize this scene in 2 bullet points:\n{script_input}"
+                    st.session_state.summary_result = get_llm_response(summ_prompt, 200, api_choice)
+                
+                if "Generate Logline" in tasks:
+                    log_prompt = f"Write a {analysis_tone} logline for this:\n{script_input}"
+                    st.session_state.logline_result = get_llm_response(log_prompt, 100, api_choice)
+                
+                if "Scene Breakdown" in tasks:
+                    bd_prompt = f"List Characters, Props, and Sounds for this script:\n{script_input}"
+                    st.session_state.breakdown_result = get_llm_response(bd_prompt, 300, api_choice)
+                    
+                if "Music Suggestions" in tasks:
+                    music_prompt = f"Suggest a musical score (Genre, Instruments, Tempo, Reference Track) for:\n{script_input}"
+                    st.session_state.music_result = get_llm_response(music_prompt, 300, api_choice)
+
+    # OUTPUTS
+    if st.session_state.summary_result:
+        st.success(f"**Summary:** {st.session_state.summary_result}")
+    if st.session_state.logline_result:
+        st.info(f"**Logline:** {st.session_state.logline_result}")
+        
+    c_out1, c_out2 = st.columns(2)
+    with c_out1:
+        if st.session_state.breakdown_result:
+            with st.expander("📂 Scene Breakdown", expanded=True):
+                st.markdown(st.session_state.breakdown_result)
+    with c_out2:
+        if st.session_state.music_result:
+            with st.expander("🎵 Music Score Suggestions", expanded=True):
+                st.markdown(st.session_state.music_result)
+
+# ==========================================
+# TAB 3: SHOT LIST MAKER
+# ==========================================
+with tab3:
+    st.markdown("### 🎥 AI Cinematographer")
+    
+    shot_default = ""
+    if use_auto_context and script_input: 
+        shot_default = script_input
+    elif use_auto_context and st.session_state.generated_script:
+        shot_default = st.session_state.generated_script
+        
+    shot_input = st.text_area("Script Context", value=shot_default, height=150, help="The script to visualize")
+    shot_style = st.selectbox("Directing Style", ["Standard Coverage", "Wes Anderson", "Michael Bay", "Handheld Documentary", "Film Noir"])
+    
+    if st.button("🎬 Generate Shot List", type="primary"):
+        if not check_usage_limit(): st.stop()
+        
+        if not shot_input:
+            st.warning("No script found.")
+        else:
+            with st.spinner("Planning shots..."):
+                sl_prompt = f"""
+                Act as a Director of Photography. Create a numbered Shot List for this scene.
+                Style: {shot_style}
+                Format as a Markdown Table with columns: | Shot # | Size | Angle | Movement | Description |
+                Script: {shot_input}
+                """
+                st.session_state.shotlist_result = get_llm_response(sl_prompt, 800, api_choice)
+
+    if st.session_state.shotlist_result:
+        st.markdown(st.session_state.shotlist_result)
+
+# ==========================================
+# TAB 4: STORYBOARDER
+# ==========================================
+with tab4:
+    st.markdown("### 🖌️ Visual Development")
+    
+    sb_default = ""
+    if use_auto_context and st.session_state.logline_result:
+        sb_default = st.session_state.logline_result
+    
+    # RESTORED: Advanced Camera Controls
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        sb_prompt = st.text_input("Shot Description", value=sb_default)
+    with c2:
+        sb_style = st.selectbox("Art Style", ["Cinematic", "Anime", "Cyberpunk", "Oil Painting", "Noir"])
+    
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        lighting = st.selectbox("Lighting", ["Natural", "Neon", "Golden Hour", "Dark/Moody"])
+    with cc2:
+        angle = st.selectbox("Camera Angle", ["Wide Shot", "Close Up", "Low Angle", "Overhead"])
+    with cc3:
+        lens = st.selectbox("Lens", ["35mm", "85mm Portrait", "Fisheye", "Anamorphic"])
+
+    use_magic = st.toggle("✨ Use Prompt Magic", value=True)
+
+    if st.button("🎨 Generate Image", type="primary"):
+        if not check_usage_limit(): st.stop()
+        
+        if not sb_prompt:
+            st.warning("Describe the shot.")
+        else:
+            with st.spinner("Dreaming..."):
+                # RESTORED: Construct full prompt with camera details
+                base_prompt = f"{sb_style} style, {angle}, {sb_prompt}, {lighting} lighting, shot on {lens}"
+                
+                final_prompt = base_prompt
+                if use_magic:
+                    with st.status("✨ Optimizing prompt..."):
+                        final_prompt = optimize_prompt_magic(base_prompt, api_choice)
+                
+                image = get_image_response(final_prompt)
+                
+                if image and not isinstance(image, str):
+                    st.session_state.generated_image = image
+                    st.image(image, caption=f"Storyboard: {sb_style}", use_container_width=True)
+                elif image == "loading_error":
+                    st.warning("⏳ Model loading. Wait 30s.")
+                else:
+                    st.error("Generation failed.")
+
+# --- EXPORT SECTION ---
+st.divider()
+c_ex1, c_ex2 = st.columns([3, 1])
+with c_ex1:
+    st.markdown("#### 📦 Export Production Package")
+    st.caption("Download your Script, Logline, Storyboard, and Shot List in one PDF.")
+with c_ex2:
+    if st.session_state.generated_script:
+        pdf_bytes = create_hollywood_pdf(
+            st.session_state.generated_script, 
+            st.session_state.logline_result or "Generated Script",
+            st.session_state.generated_image,
+            st.session_state.shotlist_result 
+        )
+        st.download_button(
+            "🎬 Download Full PDF",
+            pdf_bytes,
+            "production_report.pdf",
+            mime="application/pdf",
+            type="primary"
+        )
