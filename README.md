@@ -57,7 +57,7 @@ Follow these steps to run the project locally.
 
 ### 1. Clone the Repository
 ```bash
-git clone [https://github.com/minjun-ia777/ai-pre-production-assistant.git](https://github.com/YOUR_USERNAME/ai-pre-production-assistant.git)
+git clone [https://github.com/Minjun-ia777/ai-pre-production-assistant.git](https://github.com/YOUR_USERNAME/ai-pre-production-assistant.git)
 cd ai-pre-production-assistant
 2. Install Dependencies
 
