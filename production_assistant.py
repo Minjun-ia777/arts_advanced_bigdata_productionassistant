@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- GLOBAL USAGE TRACKER (Server-Side Memory) ---
+# --- GLOBAL USAGE TRACKER ---
 @st.cache_resource
 def get_global_usage_db():
     return {}
@@ -136,7 +136,16 @@ def optimize_prompt_magic(user_prompt, provider):
     """
     return get_llm_response(system_prompt, 150, provider)
 
-# --- PDF GENERATORS ---
+# --- PDF GENERATORS (FIXED FOR UNICODE ERRORS) ---
+
+def safe_text(text):
+    """
+    Removes characters that FPDF cannot handle (like Emojis or Korean/Chinese).
+    Replaces them with '?' to prevent crashes.
+    """
+    if not text: return ""
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 class ScreenplayPDF(FPDF):
     def header(self):
         self.set_font('Courier', '', 12)
@@ -155,7 +164,7 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
         pdf.set_font("Courier", 'B', 12)
         pdf.cell(0, 10, "LOGLINE:", ln=True)
         pdf.set_font("Courier", '', 12)
-        pdf.multi_cell(0, 6, logline)
+        pdf.multi_cell(0, 6, safe_text(logline)) # Applied safe_text
         pdf.ln(10)
     
     # Image
@@ -177,7 +186,7 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
         is_dialogue_block = False
         
         for line in lines:
-            line = line.strip()
+            line = safe_text(line.strip()) # Applied safe_text
             if not line:
                 pdf.ln(5)
                 is_dialogue_block = False
@@ -213,9 +222,9 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
         pdf.cell(0, 10, "APPENDIX: SHOT LIST", ln=True)
         pdf.set_font("Courier", '', 10)
         clean_shotlist = shotlist.replace("|", "  ").replace("---", "")
-        pdf.multi_cell(0, 5, clean_shotlist)
+        pdf.multi_cell(0, 5, safe_text(clean_shotlist)) # Applied safe_text
 
-    return pdf.output(dest="S").encode("latin-1")
+    return pdf.output(dest="S").encode("latin-1", "replace") # Added replace handler
 
 def create_report_pdf(title, content_dict):
     """Creates a simple report PDF for Analysis or Shot Lists"""
@@ -223,18 +232,18 @@ def create_report_pdf(title, content_dict):
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, title, ln=True, align='C')
+    pdf.cell(0, 10, safe_text(title), ln=True, align='C')
     pdf.ln(10)
     pdf.set_font("Arial", '', 12)
     for section, text in content_dict.items():
         if text:
             pdf.set_font("Arial", 'B', 12)
-            pdf.cell(0, 10, section.upper(), ln=True)
+            pdf.cell(0, 10, safe_text(section.upper()), ln=True)
             pdf.set_font("Arial", '', 11)
             clean_text = text.replace("**", "").replace("#", "")
-            pdf.multi_cell(0, 6, clean_text)
+            pdf.multi_cell(0, 6, safe_text(clean_text)) # Applied safe_text
             pdf.ln(5)
-    return pdf.output(dest="S").encode("latin-1")
+    return pdf.output(dest="S").encode("latin-1", "replace") # Added replace handler
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -569,11 +578,9 @@ with st.container(border=True):
     with col_ex1:
         st.caption("Requirements: You must at least have a **Script** (generated in Tab 1 or pasted in Tab 2). Other assets are optional.")
     with col_ex2:
-        # Check if we have enough content to print
         has_content = st.session_state.generated_script or (script_input and len(script_input) > 10)
         
         if has_content:
-            # Use generated script OR pasted input
             final_script = st.session_state.generated_script if st.session_state.generated_script else script_input
             
             pdf_bytes = create_hollywood_pdf(
