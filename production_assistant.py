@@ -136,7 +136,9 @@ def optimize_prompt_magic(user_prompt, provider):
     """
     return get_llm_response(system_prompt, 150, provider)
 
-# --- STUDIOBINDER HOLLYWOOD PDF FORMAT ---
+# --- PDF GENERATORS ---
+
+# 1. Hollywood Script Format (For Tab 1 & Full Package)
 class ScreenplayPDF(FPDF):
     def header(self):
         self.set_font('Courier', '', 12)
@@ -151,11 +153,12 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
     pdf.set_right_margin(25)
     
     # Logline
-    pdf.set_font("Courier", 'B', 12)
-    pdf.cell(0, 10, "LOGLINE:", ln=True)
-    pdf.set_font("Courier", '', 12)
-    pdf.multi_cell(0, 6, logline)
-    pdf.ln(10)
+    if logline:
+        pdf.set_font("Courier", 'B', 12)
+        pdf.cell(0, 10, "LOGLINE:", ln=True)
+        pdf.set_font("Courier", '', 12)
+        pdf.multi_cell(0, 6, logline)
+        pdf.ln(10)
     
     # Image
     if image:
@@ -166,44 +169,46 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
         pdf.ln(15)
 
     # Script
-    pdf.set_font("Courier", 'B', 12)
-    pdf.cell(0, 10, "SCENE SCRIPT:", ln=True)
-    pdf.ln(5)
-    
-    pdf.set_font("Courier", '', 12)
-    lines = script_text.split('\n')
-    is_dialogue_block = False
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            pdf.ln(5)
-            is_dialogue_block = False
-            continue
-        if line.startswith("INT.") or line.startswith("EXT.") or line.startswith("I/E."):
-            pdf.set_font("Courier", 'B', 12)
-            pdf.set_x(38)
-            pdf.cell(0, 5, line.upper(), ln=True)
-            pdf.set_font("Courier", '', 12)
-            is_dialogue_block = False
-        elif line.isupper() and len(line) < 40 and not is_dialogue_block:
-            pdf.set_x(94)
-            pdf.cell(0, 5, line, ln=True)
-            is_dialogue_block = True
-        elif line.startswith("(") and line.endswith(")"):
-            pdf.set_x(79)
-            pdf.cell(0, 5, line, ln=True)
-        elif is_dialogue_block:
-            pdf.set_x(63)
-            pdf.multi_cell(90, 5, line)
-        elif line.endswith("TO:") and line.isupper():
-            pdf.set_x(152)
-            pdf.cell(0, 5, line, ln=True)
-        else:
-            pdf.set_x(38)
-            pdf.multi_cell(0, 5, line)
-            is_dialogue_block = False
+    if script_text:
+        pdf.set_font("Courier", 'B', 12)
+        pdf.cell(0, 10, "SCENE SCRIPT:", ln=True)
+        pdf.ln(5)
+        
+        pdf.set_font("Courier", '', 12)
+        lines = script_text.split('\n')
+        is_dialogue_block = False
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                pdf.ln(5)
+                is_dialogue_block = False
+                continue
+            if line.startswith("INT.") or line.startswith("EXT.") or line.startswith("I/E."):
+                pdf.set_font("Courier", 'B', 12)
+                pdf.set_x(38)
+                pdf.cell(0, 5, line.upper(), ln=True)
+                pdf.set_font("Courier", '', 12)
+                is_dialogue_block = False
+            elif line.isupper() and len(line) < 40 and not is_dialogue_block:
+                pdf.set_x(94)
+                pdf.cell(0, 5, line, ln=True)
+                is_dialogue_block = True
+            elif line.startswith("(") and line.endswith(")"):
+                pdf.set_x(79)
+                pdf.cell(0, 5, line, ln=True)
+            elif is_dialogue_block:
+                pdf.set_x(63)
+                pdf.multi_cell(90, 5, line)
+            elif line.endswith("TO:") and line.isupper():
+                pdf.set_x(152)
+                pdf.cell(0, 5, line, ln=True)
+            else:
+                pdf.set_x(38)
+                pdf.multi_cell(0, 5, line)
+                is_dialogue_block = False
 
+    # Shot List
     if shotlist:
         pdf.add_page()
         pdf.set_font("Courier", 'B', 12)
@@ -214,13 +219,37 @@ def create_hollywood_pdf(script_text, logline, image=None, shotlist=None):
 
     return pdf.output(dest="S").encode("latin-1")
 
+# 2. General Report Format (For Tab 2 & 3 individual downloads)
+def create_report_pdf(title, content_dict):
+    """Creates a simple report PDF for Analysis or Shot Lists"""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, title, ln=True, align='C')
+    pdf.ln(10)
+    
+    # Content Loop
+    pdf.set_font("Arial", '', 12)
+    for section, text in content_dict.items():
+        if text:
+            pdf.set_font("Arial", 'B', 12)
+            pdf.cell(0, 10, section.upper(), ln=True)
+            pdf.set_font("Arial", '', 11)
+            # Remove markdown syntax usually returned by LLMs
+            clean_text = text.replace("**", "").replace("#", "")
+            pdf.multi_cell(0, 6, clean_text)
+            pdf.ln(5)
+            
+    return pdf.output(dest="S").encode("latin-1")
+
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2503/2503508.png", width=50)
     st.title("Settings")
     
-    # 1. API Choice
-    st.subheader("⚙️ AI Engine")
     api_choice = st.radio("Choose Provider:", ["Free (Hugging Face)", "Premium (OpenAI)"])
     
     if api_choice == "Premium (OpenAI)":
@@ -234,7 +263,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 2. Memory Settings
     st.subheader("🧠 Memory")
     use_auto_context = st.toggle("Enable Auto-Context", value=True)
     if use_auto_context:
@@ -244,7 +272,6 @@ with st.sidebar:
 
     st.divider()
 
-    # 3. Usage Monitor
     if api_choice == "Free (Hugging Face)":
         st.subheader("📊 Daily Quota")
         u_count = get_current_usage()
@@ -256,9 +283,8 @@ with st.sidebar:
 
     st.divider()
     
-    # 4. Credits
     st.markdown("### ℹ️ About")
-    st.caption("Designed & Built for Final Project 2025")
+    st.caption("Final Project 2025")
     st.caption("**Powered by:**")
     st.markdown("- Hugging Face Inference")
     st.markdown("- Qwen 2.5 (LLM)")
@@ -297,7 +323,6 @@ with tab1:
         conflict = st.text_input("Conflict", placeholder="e.g. Bomb ticking")
         tone = st.selectbox("Tone", ["Serious", "Funny", "Dark", "Surreal"])
 
-    # NEW: SCRIPT LENGTH TOGGLE
     st.divider()
     length_opt = st.radio("Script Length:", ["Short (1 Minute)", "Long (3 Minutes / Dialogue Heavy)"], horizontal=True)
     
@@ -337,6 +362,14 @@ with tab1:
         st.divider()
         st.subheader("📜 Generated Script")
         st.code(st.session_state.generated_script, language="plaintext")
+        
+        # TAB 1 SPECIFIC PDF DOWNLOAD
+        pdf_bytes = create_hollywood_pdf(
+            st.session_state.generated_script, 
+            "Generated Script (Story Generator)", 
+            None, None
+        )
+        st.download_button("📥 Download Script PDF", pdf_bytes, "script.pdf", "application/pdf")
 
 # ==========================================
 # TAB 2: SCRIPT DOCTOR
@@ -386,12 +419,10 @@ with tab2:
                     st.session_state.music_result = get_llm_response(music_prompt, 300, api_choice)
                     success = True
 
-                # NEW: COLOR PALETTE LOGIC
                 if "Color Palette" in tasks:
                     color_prompt = f"""
                     Analyze the mood of this script and generate a 5-color palette for color grading.
-                    Format exactly like this CSV:
-                    Color Name, Hex Code, Rationale
+                    Format exactly like this CSV: Color Name, Hex Code, Rationale.
                     Script: {script_input}
                     """
                     st.session_state.color_palette_result = get_llm_response(color_prompt, 300, api_choice)
@@ -411,16 +442,26 @@ with tab2:
         if st.session_state.breakdown_result:
             with st.expander("📂 Scene Breakdown", expanded=True):
                 st.markdown(st.session_state.breakdown_result)
-        # NEW: COLOR PALETTE CSV DOWNLOAD
         if st.session_state.color_palette_result:
-            with st.expander("🎨 Color Grading Palette", expanded=True):
+            with st.expander("🎨 Color Palette", expanded=True):
                 st.markdown(st.session_state.color_palette_result)
-                st.download_button("📥 Download Palette CSV", st.session_state.color_palette_result, "palette.csv", "text/csv")
+                st.download_button("📥 Download CSV", st.session_state.color_palette_result, "palette.csv", "text/csv")
 
     with c_out2:
         if st.session_state.music_result:
-            with st.expander("🎵 Music Score Suggestions", expanded=True):
+            with st.expander("🎵 Music Suggestions", expanded=True):
                 st.markdown(st.session_state.music_result)
+    
+    # TAB 2 SPECIFIC PDF DOWNLOAD (Analysis Report)
+    if st.session_state.summary_result:
+        report_data = {
+            "Summary": st.session_state.summary_result,
+            "Logline": st.session_state.logline_result,
+            "Scene Breakdown": st.session_state.breakdown_result,
+            "Music": st.session_state.music_result
+        }
+        pdf_bytes = create_report_pdf("Script Analysis Report", report_data)
+        st.download_button("📥 Download Analysis PDF", pdf_bytes, "analysis_report.pdf", "application/pdf")
 
 # ==========================================
 # TAB 3: SHOT LIST MAKER
@@ -457,7 +498,14 @@ with tab3:
 
     if st.session_state.shotlist_result:
         st.markdown(st.session_state.shotlist_result)
-        st.download_button("📥 Download Shot List", st.session_state.shotlist_result, "shotlist.md")
+        
+        # TAB 3 SPECIFIC DOWNLOADS
+        c_dl1, c_dl2 = st.columns(2)
+        with c_dl1:
+            st.download_button("📥 Download Shot List (.md)", st.session_state.shotlist_result, "shotlist.md")
+        with c_dl2:
+            pdf_bytes = create_report_pdf("Shot List", {"Content": st.session_state.shotlist_result})
+            st.download_button("📥 Download Shot List (.pdf)", pdf_bytes, "shotlist.pdf", "application/pdf")
 
 # ==========================================
 # TAB 4: STORYBOARDER
@@ -512,13 +560,23 @@ with tab4:
                     st.warning("⏳ Model loading. Wait 30s.")
                 else:
                     st.error("Generation failed.")
+    
+    # TAB 4 SPECIFIC DOWNLOAD (Storyboard PDF)
+    if st.session_state.generated_image:
+        pdf_bytes = create_hollywood_pdf(
+            "", # No script
+            f"Storyboard: {sb_style} | {sb_prompt}", # Use Logline space for prompt info
+            st.session_state.generated_image,
+            None
+        )
+        st.download_button("📥 Download Storyboard PDF", pdf_bytes, "storyboard.pdf", "application/pdf")
 
 # --- EXPORT SECTION ---
 st.divider()
 c_ex1, c_ex2 = st.columns([3, 1])
 with c_ex1:
-    st.markdown("#### 📦 Export Production Package")
-    st.caption("Download your Script, Logline, Storyboard, and Shot List in one PDF.")
+    st.markdown("#### 📦 Export Full Production Package")
+    st.caption("Download EVERYTHING (Script, Logline, Storyboard, Shot List) in one PDF.")
 with c_ex2:
     if st.session_state.generated_script:
         pdf_bytes = create_hollywood_pdf(
