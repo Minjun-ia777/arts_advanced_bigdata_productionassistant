@@ -123,10 +123,10 @@ def get_image_response(prompt):
         elif "rate limit" in str(e).lower(): return "busy_error"
         return None
 
-# --- PROMPT MAGIC ---
+# --- PROMPT MAGIC (UPDATED TO MATCH SLIDE) ---
 def optimize_prompt_magic(user_prompt, provider):
     system_prompt = f"""
-    Act as an expert Prompt Engineer for Stable Diffusion XL.
+    Act as an expert Stable Diffusion Prompt Writer.
     Rewrite the following user description into a high-quality image generation prompt.
     User Description: "{user_prompt}"
     Rules:
@@ -341,6 +341,7 @@ with tab1:
             st.warning("Need Character & Setting.")
         else:
             with st.spinner("Writing script..."):
+                # Screenwriter Persona
                 script_prompt = f"""
                 You are a professional Hollywood Screenwriter. Write a scene using standard format.
                 STRICT FORMATTING RULES:
@@ -371,7 +372,7 @@ with tab1:
         st.download_button("📥 Download Script PDF Only", pdf_bytes, "script.pdf", "application/pdf")
 
 # ==========================================
-# TAB 2: SCRIPT DOCTOR
+# TAB 2: SCRIPT DOCTOR (UPDATED TO MATCH SLIDES)
 # ==========================================
 with tab2:
     st.markdown("### 🩺 Analyze & Fix Scripts")
@@ -399,28 +400,33 @@ with tab2:
             with st.spinner("Analyzing..."):
                 success = False
                 if "Summarize" in tasks:
-                    summ_prompt = f"Summarize this scene in 2 bullet points:\n{script_input}"
+                    # UPDATED: Matches "Film Analyst" Persona
+                    summ_prompt = f"Act as a Film Analyst. Summarize this scene in 2 bullet points:\n{script_input}"
                     st.session_state.summary_result = get_llm_response(summ_prompt, 200, api_choice)
                     success = True
                 
                 if "Generate Logline" in tasks:
-                    log_prompt = f"Write a {analysis_tone} logline for this:\n{script_input}"
+                    # UPDATED: Matches "Script Editor" Persona
+                    log_prompt = f"Act as a Script Editor. Write a {analysis_tone} logline for this:\n{script_input}"
                     st.session_state.logline_result = get_llm_response(log_prompt, 100, api_choice)
                     success = True
                 
                 if "Scene Breakdown" in tasks:
-                    bd_prompt = f"List Characters, Props, and Sounds for this script:\n{script_input}"
+                    # Matches "Script Supervisor" Persona
+                    bd_prompt = f"Act as a Script Supervisor. List Characters, Props, and Sounds for this script:\n{script_input}"
                     st.session_state.breakdown_result = get_llm_response(bd_prompt, 300, api_choice)
                     success = True
                     
                 if "Music Suggestions" in tasks:
-                    music_prompt = f"Suggest a musical score (Genre, Instruments, Tempo, Reference Track) for:\n{script_input}"
+                    # UPDATED: Matches "Film Composer" Persona
+                    music_prompt = f"Act as a Film Composer. Suggest a musical score (Genre, Instruments, Tempo, Reference Track) for:\n{script_input}"
                     st.session_state.music_result = get_llm_response(music_prompt, 300, api_choice)
                     success = True
 
                 if "Color Palette" in tasks:
+                    # Matches "Colorist" Persona
                     color_prompt = f"""
-                    Analyze the mood of this script and generate a 5-color palette for color grading.
+                    Act as a Colorist. Analyze the mood of this script and generate a 5-color palette for color grading.
                     Format exactly like this CSV: Color Name, Hex Code, Rationale.
                     Script: {script_input}
                     """
@@ -483,6 +489,7 @@ with tab3:
             st.warning("No script found.")
         else:
             with st.spinner("Planning shots..."):
+                #  Director of Photography Persona
                 sl_prompt = f"""
                 Act as a Director of Photography. Create a numbered Shot List for this scene.
                 Style: {shot_style}
