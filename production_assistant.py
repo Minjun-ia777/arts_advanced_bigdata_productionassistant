@@ -285,6 +285,7 @@ with st.sidebar:
     
     st.markdown("### ℹ️ About")
     st.caption("Final Project 2025")
+    st.caption("Created by Ezequiel Gavilan")
     st.caption("**Powered by:**")
     st.markdown("- Hugging Face Inference")
     st.markdown("- Qwen 2.5 (LLM)")
